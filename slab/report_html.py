@@ -265,7 +265,8 @@ def build_html(result: AnalysisResult, meta: dict, spec: ReportSpec | None = Non
         add(SECTIONS["signoff"][0], _sec_signoff(spec), "keep")
 
     key, head, _ = _verdict(result)
-    today = _dt.date.today().strftime("%Y년 %m월 %d일")
+    d = _dt.date.today()
+    today = f"{d.year}년 {d.month:02d}월 {d.day:02d}일"  # Windows 의 strftime 은 한글을 못 쓴다
     facts = [("동", meta.get("동", "") or "-"), ("검사 층", f"{meta.get('상부층', '')} 바닥 / {meta.get('하부층', '')} 천장"),
              ("설계 두께", f"{s.design_mm:g}mm"), ("작성일", today)]
     fact_html = "".join(f"<div><span>{a}</span><b>{_e(b)}</b></div>" for a, b in facts)
