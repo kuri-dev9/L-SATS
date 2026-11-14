@@ -2,7 +2,7 @@
 
 상·하부층 레이저 스캔 그리드 데이터와 통합 CAD 도면(DXF)으로 **실(방)별 슬래브 두께**를 계산하고,
 설계 두께 대비 적합/미달을 판정해 **Excel 결과표와 DXF 도면**으로 출력하는 웹 프로그램입니다.
-**Windows PC**에서 `run.bat` 더블클릭으로 실행합니다.
+**Windows PC**에서 실행합니다.
 
 ```
    8F 바닥 (콘크리트 윗면)   ← 상부층 스캔 floor_z
@@ -14,7 +14,24 @@
 
 ---
 
-## 1. Windows에서 실행하기
+## 0. 가장 쉬운 실행 방법 (프로그램을 몰라도 됩니다)
+
+Python 설치 없이 **받고 → 압축 풀고 → 더블클릭**만 하면 됩니다.
+
+1. **[여기를 눌러 L-SATS-windows.zip 받기](https://github.com/kuri-dev9/L-SATS/releases/latest/download/L-SATS-windows.zip)** (약 150~200MB)
+2. 받은 파일을 **마우스 오른쪽 클릭 → 「압축 풀기」(또는 「모두 압축 풀기」) → 「압축 풀기」**
+   - 바탕화면처럼 평범한 곳에 풀어 주세요. ZIP 파일 안에서 바로 실행하면 안 됩니다.
+3. 풀린 `L-SATS` 폴더 안의 **`START.bat`을 더블클릭**
+   - 「Windows의 PC 보호」 파란 창이 뜨면 **「추가 정보」 → 「실행」** 을 누릅니다.
+4. 10~30초 뒤 브라우저에 프로그램이 열립니다. **검은 창은 사용하는 동안 닫지 마세요.** 끝낼 때 닫으면 됩니다.
+
+처음 열면 가상 데모 데이터로 결과가 보입니다. 실제 분석은 「파일 및 데이터」 탭에서 DXF 1개와 CSV 2개를 올리면 됩니다.
+
+> 아래 1장 이후는 Python을 직접 설치해서 실행하거나 프로그램을 고치려는 분을 위한 내용입니다.
+
+---
+
+## 1. Windows에서 실행하기 (Python 직접 설치)
 
 ### 1-1. Python 설치 (처음 한 번)
 
@@ -61,6 +78,8 @@ run.bat --server.address 0.0.0.0
 
 | 증상 | 해결 |
 |---|---|
+| `START.bat`이 바로 꺼짐 / `"python" folder is missing` | ZIP 안에서 실행한 경우입니다. 0장의 2번대로 압축을 먼저 푸세요 |
+| 「Windows의 PC 보호」 창 | 「추가 정보」 → 「실행」 |
 | `Python 3.10 or later is required` | 1-1대로 Python을 설치하고 `Add python.exe to PATH`를 체크했는지 확인 |
 | 실행하면 Microsoft Store가 열림 | Windows의 가짜 `python` 바로가기입니다. 1-1대로 python.org 설치본을 설치하세요 |
 | `Installation failed` | 인터넷·회사 프록시 확인 후 다시 실행. 계속 실패하면 `.venv` 폴더를 지우고 다시 실행 |
@@ -187,7 +206,8 @@ slab/__main__.py       명령줄 실행 (python -m slab)
 demo_data/             가상 데모 입력 (8F/7F)
 tools/make_demo_data.py 데모 데이터 생성기
 tests/                 pytest (계산 로직 + 웹 화면 스모크 테스트)
-run.bat / run.sh       원클릭 실행 (Windows / macOS·Linux)
+run.bat / run.sh       원클릭 실행 (Windows / macOS·Linux, Python 필요)
+packaging/             Python 포함 Windows 휴대용 ZIP 빌드 (START.bat, build_windows.ps1)
 test.bat               Windows 테스트 실행
 .streamlit/config.toml 업로드 한도 500MB 등 Streamlit 설정
 .github/workflows/     GitHub Actions: Windows·Ubuntu 테스트 + run.bat 실행 검증
@@ -203,7 +223,18 @@ macOS/Linux: `pip install -r requirements-dev.txt && pytest`
 
 GitHub에 push하면 Actions가 **Windows**와 Ubuntu에서 테스트를 돌리고, Windows에서 `run.bat`으로 실제 서버가 뜨는지도 확인합니다.
 
+### Windows 휴대용 ZIP 배포
+
+`v`로 시작하는 태그를 push하면 `release-windows` 워크플로가 Windows에서 Python 포함 ZIP을 만들고,
+압축을 풀어 `START.bat`이 실제로 뜨는지 확인한 뒤 GitHub Releases에 올립니다.
+
+```bash
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+0장의 다운로드 링크는 항상 최신 Release를 가리킵니다.
+
 ### 요구 사항
 
-- Python 3.10 ~ 3.13
+- Python 3.10 ~ 3.14 (휴대용 ZIP은 3.14 포함)
 - 패키지: `requirements.txt` (streamlit, pandas, numpy, scipy, ezdxf, matplotlib, openpyxl)

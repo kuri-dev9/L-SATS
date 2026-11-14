@@ -1,0 +1,14 @@
+L-SATS - Slab Thickness Analyzer
+
+[How to start]
+1. Double-click START.bat
+2. If "Windows protected your PC" appears: click "More info" -> "Run anyway"
+3. The browser opens http://localhost:8501 automatically (about 10-30 seconds)
+4. Keep the black window open while using the program. Close it to stop.
+
+[Notes]
+- Do not move START.bat out of this folder. The "python" folder must be next to it.
+- Extract to a normal folder such as Desktop or C:\L-SATS (not inside the ZIP, not Program Files).
+- Without uploading files, the program shows virtual demo data.
+
+Korean manual: https://github.com/kuri-dev9/L-SATS#readme

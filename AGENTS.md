@@ -31,3 +31,4 @@ macOS/Linux: `./run.sh`, 또는 `.venv/bin/python`으로 같은 명령을 실행
 - DXF는 mm 단위 도면 좌표, CSV는 m 단위 측량 좌표(회전되어 있음, 데모 데이터는 23.5°)입니다. 변환은 도면의 측정점 라벨(P001…)로 구합니다.
 - 계산 로직은 `slab/` 패키지에 두고, `app.py`는 화면만 담당합니다.
 - `.bat` 파일은 CRLF 줄바꿈과 ASCII 문자만 씁니다 (`.gitattributes`로 고정되어 있습니다).
+- 프로그램을 모르는 사용자에게는 README 0장의 휴대용 ZIP(`START.bat`)을 안내합니다. 빌드는 `packaging/`과 `.github/workflows/release.yml`(태그 `v*` push)로 합니다.

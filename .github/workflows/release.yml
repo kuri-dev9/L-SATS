@@ -1,0 +1,53 @@
+name: release-windows
+
+# Python이 포함된 Windows 휴대용 ZIP을 만들어 GitHub Releases에 올린다.
+# v로 시작하는 태그를 push하면 실행된다 (예: git tag v0.1.0 && git push origin v0.1.0).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # python.org가 embeddable 파일을 제공하는(정식 지원 중인) 버전이어야 한다
+          python-version: "3.14"
+      - name: 패키지 빌드
+        shell: pwsh
+        run: packaging\build_windows.ps1
+      - name: 압축 풀어서 START.bat 실행 확인
+        shell: pwsh
+        run: |
+          Expand-Archive dist\L-SATS-windows.zip C:\check
+          # 시스템 Python이 끼어들지 않도록 PATH에서 뺀다
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Python|hostedtoolcache' }) -join ';'
+          $p = Start-Process cmd.exe -WorkingDirectory C:\check\L-SATS -ArgumentList '/c', 'START.bat --server.headless true > run.log 2>&1' -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 45; $i++) {
+            Start-Sleep -Seconds 4
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing http://localhost:8501/_stcore/health
+              if ($r.Content -match 'ok') { $ok = $true; break }
+            } catch {}
+          }
+          Get-Content C:\check\L-SATS\run.log
+          if (-not $ok) { throw 'START.bat did not start the app' }
+          # 데모 화면 전체가 오류 없이 그려지는지 (휴대용 Python으로 계산·엑셀 생성)
+          C:\check\L-SATS\python\python.exe -c "import sys; sys.path.insert(0, r'C:\check\L-SATS'); from slab import *; from slab.report import build_excel; d=r'C:\check\L-SATS\demo_data\\'; r=analyze(load_grid(d+'grid_analysis_floor_level_8F.csv'), load_grid(d+'grid_analysis_floor_level_7F.csv'), load_cad(d+'report_merge_8F.dxf')); assert len(build_excel(r, {})) > 10000; print('portable OK', round(r.summary['mean_mm'], 1))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: L-SATS-windows
+          path: dist/L-SATS-windows.zip
+      - name: Release에 올리기
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist\L-SATS-windows.zip --title "L-SATS ${{ github.ref_name }} (Windows)" --notes "Windows 휴대용 버전. ZIP을 받아 압축을 풀고 START.bat을 더블클릭하세요. Python 설치가 필요 없습니다."
