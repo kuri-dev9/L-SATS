@@ -1,0 +1,51 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -v
+
+  windows-run-bat:
+    # 사용자와 같은 방식(run.bat)으로 설치·실행되는지 Windows에서 확인
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: run.bat 실행 후 서버 응답 확인
+        shell: pwsh
+        run: |
+          $p = Start-Process cmd.exe -ArgumentList '/c', 'run.bat --server.headless true > run.log 2>&1' -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 90; $i++) {
+            Start-Sleep -Seconds 4
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing http://localhost:8501/_stcore/health
+              if ($r.Content -match 'ok') { $ok = $true; break }
+            } catch {}
+          }
+          Get-Content run.log
+          if (-not $ok) { throw 'run.bat did not start the app' }
+          Write-Host 'run.bat OK'
+      - name: 명령줄 실행 확인
+        shell: pwsh
+        run: |
+          .venv\Scripts\python.exe -m slab demo_data\grid_analysis_floor_level_8F.csv demo_data\grid_analysis_floor_level_7F.csv --cad demo_data\report_merge_8F.dxf -o result.xlsx --dxf-output result.dxf
+          if (-not (Test-Path result.xlsx)) { throw 'no result.xlsx' }
