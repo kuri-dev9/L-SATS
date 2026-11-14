@@ -33,3 +33,9 @@ def test_app_interpolate_method():
     at = _run()
     at.button_group(key="method").set_value("interpolate").run()
     assert not at.exception
+
+
+def test_app_plan_view_toggle():
+    at = _run()
+    at.button_group(key="view_mode").set_value("평면도로 보기").run()
+    assert not at.exception

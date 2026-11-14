@@ -5,3 +5,4 @@ scipy>=1.10
 ezdxf>=1.1
 matplotlib>=3.7
 openpyxl>=3.1
+plotly>=6.0

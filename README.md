@@ -91,12 +91,12 @@ run.bat --server.address 0.0.0.0
 
 ## 2. 사용 방법
 
-화면은 위에서 아래로 세 단계입니다.
+맨 위의 **「이 프로그램이 하는 일을 그림으로 보기」** 에 측정 원리 그림이 있습니다. 화면은 그 아래로 세 단계입니다.
 
 | 단계 | 하는 일 |
 |---|---|
 | **① 파일 올리기** | 도면(DXF), 위층 스캔, 아래층 스캔 파일 3개를 올리고 동·층 이름, 설계 두께(기본 135mm), 허용 오차(기본 10mm)를 확인합니다. 파일을 올리기 전에는 연습용 데모 데이터가 보입니다. |
-| **② 결과 한눈에 보기** | 맨 위에 **「모든 방 통과」(초록)** 또는 **「N개 방이 설계보다 얇아요」(빨강)** 가 크게 나옵니다. 아래에 평균 두께, 통과한 방 수, 방별 결과표(얇은 방이 위), 위치도가 있습니다. |
+| **② 결과 한눈에 보기** | 맨 위에 **「모든 방 통과」(초록)** 또는 **「N개 방이 설계보다 얇아요」(빨강)** 가 크게 나옵니다. 아래에 평균 두께, 통과한 방 수, 방별 결과표(얇은 방이 위)가 있고, **3D 보기**(기준 두께 판 위로 솟으면 통과·아래로 내려가면 미달, 마우스로 회전)와 **평면도**(측정점별 두께 숫자) 중 골라 볼 수 있습니다. |
 | **③ 결과 파일 받기** | 버튼 한 번으로 엑셀 보고서, CAD 도면(DXF), 포인트 목록(CSV)을 받습니다. |
 
 맨 아래 **「자세히 보기」** 는 담당자용입니다. 보통은 건드리지 않아도 됩니다.
@@ -213,6 +213,8 @@ CSV 인코딩은 UTF-8과 CP949(한글 Excel 저장)를 모두 지원합니다.
 app.py                 Streamlit 웹 화면 (화면만 담당)
 slab/core.py           입력 읽기, CAD 해석, 좌표 정합, 대응점 매칭, 두께·판정·실별 집계
 slab/plot.py           포인트 위치도 (matplotlib)
+slab/plot3d.py         3D 보기 (plotly)
+slab/assets/           원리 설명 그림 (how_it_works.svg)
 slab/report.py         Excel·DXF 결과 생성
 slab/__main__.py       명령줄 실행 (python -m slab)
 demo_data/             가상 데모 입력 (8F/7F)
@@ -249,4 +251,4 @@ git tag v0.1.1 && git push origin v0.1.1
 ### 요구 사항
 
 - Python 3.11 ~ 3.14 (휴대용 ZIP은 3.14 포함)
-- 패키지: `requirements.txt` (streamlit, pandas, numpy, scipy, ezdxf, matplotlib, openpyxl)
+- 패키지: `requirements.txt` (streamlit, pandas, numpy, scipy, ezdxf, matplotlib, openpyxl, plotly)

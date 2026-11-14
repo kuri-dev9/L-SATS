@@ -109,3 +109,18 @@ def test_demo_data_is_reproducible(tmp_path):
     mk.main(tmp_path)
     for name in ("grid_analysis_floor_level_8F.csv", "grid_analysis_floor_level_7F.csv"):
         assert (tmp_path / name).read_bytes() == (DATA / name).read_bytes()
+
+
+def test_plot_3d(sample):
+    from slab.plot3d import plot_3d
+
+    upper, lower, plan = sample
+    r = analyze(upper, lower, plan)
+    fig = plot_3d(r)
+    names = [t.name or "" for t in fig.data]
+    # 통과·미달 막대, 기준 판이 모두 그려진다
+    assert any(n.startswith("기준 통과") for n in names)
+    assert any(n.startswith("기준 미달") for n in names)
+    assert any(n.startswith("기준 판 125mm") for n in names)
+    bars = sum(len(t.x) for t in fig.data if t.type == "mesh3d" and t.name.startswith("기준 "))
+    assert bars >= 8 * r.summary["n_valid"]

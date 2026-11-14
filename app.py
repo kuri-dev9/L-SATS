@@ -16,8 +16,10 @@ import streamlit as st
 from slab import Settings, __version__, analyze, load_cad, read_table, standardize_grid
 from slab.core import DEFAULT_COLUMNS, OUTSIDE_ROOM
 from slab.plot import plot_plan
+from slab.plot3d import plot_3d
 from slab.report import build_dxf, build_excel, points_table, rooms_table, summary_rows
 
+HOW_IT_WORKS = (Path(__file__).parent / "slab" / "assets" / "how_it_works.svg").read_text(encoding="utf-8")
 DEMO_DIR = Path(__file__).parent / "demo_data"  # 가상 데모 데이터 (tools/make_demo_data.py)
 DEMO = {
     "cad": DEMO_DIR / "report_merge_8F.dxf",
@@ -76,6 +78,10 @@ def _column_mapping(raw: pd.DataFrame, key: str) -> dict:
 
 st.title("슬래브 두께 분석기", icon=":material/layers:")
 st.caption(f"위층 바닥과 아래층 천장의 높이 차이로 방마다 슬래브 두께를 계산합니다 · v{__version__}")
+with st.expander("처음이세요? 이 프로그램이 하는 일을 그림으로 보기", expanded=True, icon=":material/help:"):
+    st.image(HOW_IT_WORKS, width="stretch")
+    st.caption("슬래브는 위층의 바닥이면서 아래층의 천장인 콘크리트 판입니다. 너무 얇으면 층간소음이 커지고 "
+               "안전에도 좋지 않아서, 설계 두께(예: 135mm)만큼 시공됐는지 방마다 확인합니다.")
 
 # ---------------------------------------------------------------- ① 파일 올리기
 with st.container(border=True):
@@ -270,10 +276,18 @@ with results_box:
                     "가장 얇은 곳(mm)": st.column_config.NumberColumn(format="%d"),
                 })
 
-        st.markdown("**위치도**")
-        st.caption("점의 색: :red[빨간색]일수록 설계보다 얇고, :blue[파란색]일수록 두껍습니다. "
-                   "빨간 동그라미는 기준 미달, 회색 X는 제외된 점입니다. 숫자는 두께(mm)입니다.")
-        st.pyplot(plot_plan(result, True, title), width="stretch", alt="방별 측정점 두께 위치도")
+        view_mode = st.segmented_control(
+            "그림으로 보기", ["3D로 보기", "평면도로 보기"], default="3D로 보기", required=True,
+            key="view_mode")
+        if view_mode == "3D로 보기":
+            st.caption(f"파란 반투명 판이 기준 두께({limit:g}mm)예요. 측정한 곳마다 기준과의 차이만큼 막대를 세웠어요. "
+                       ":green[초록 막대]는 판 위로 솟아 통과, :red[빨간 막대]는 판 아래로 내려가 미달입니다. "
+                       "마우스로 끌면 돌아가고, 휠로 확대·축소, 막대에 올리면 방 이름과 두께가 보여요.")
+            st.plotly_chart(plot_3d(result), width="stretch", key="plot3d")
+        else:
+            st.caption("점의 색: :red[빨간색]일수록 설계보다 얇고, :blue[파란색]일수록 두껍습니다. "
+                       "빨간 동그라미는 기준 미달, 회색 X는 제외된 점입니다. 숫자는 두께(mm)입니다.")
+            st.pyplot(plot_plan(result, True, title), width="stretch", alt="방별 측정점 두께 위치도")
 
 # ---------------------------------------------------------------- ③ 파일 받기
 stem = f"{meta['동']}_{meta['상부층']}-{meta['하부층']}_슬래브두께".replace(" ", "").strip("_") or "슬래브두께"

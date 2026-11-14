@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 310" font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3b4252"/>
+    </marker>
+    <pattern id="hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#aab2bd"/>
+      <line x1="0" y1="0" x2="0" y2="10" stroke="#9aa3ae" stroke-width="4"/>
+    </pattern>
+  </defs>
+
+  <!-- 위층 -->
+  <rect x="60" y="20" width="480" height="105" fill="#f5f7fa" stroke="#c9d1db"/>
+  <text x="76" y="46" font-size="17" font-weight="700" fill="#3b4252">위층 (예: 8F)</text>
+  <!-- 위층 스캐너: 바닥을 잰다 -->
+  <line x1="300" y1="92" x2="286" y2="125" stroke="#3b4252" stroke-width="2.5"/>
+  <line x1="300" y1="92" x2="314" y2="125" stroke="#3b4252" stroke-width="2.5"/>
+  <line x1="300" y1="92" x2="300" y2="125" stroke="#3b4252" stroke-width="2"/>
+  <line x1="300" y1="84" x2="200" y2="125" stroke="#d64545" stroke-width="2" stroke-dasharray="5 4"/>
+  <line x1="300" y1="84" x2="400" y2="125" stroke="#d64545" stroke-width="2" stroke-dasharray="5 4"/>
+  <circle cx="300" cy="82" r="10" fill="#d64545"/>
+  <circle cx="200" cy="125" r="4.5" fill="#d64545"/>
+  <circle cx="400" cy="125" r="4.5" fill="#d64545"/>
+  <text x="322" y="72" font-size="13" fill="#3b4252">레이저 스캐너</text>
+  <text x="410" y="112" font-size="14" font-weight="700" fill="#d64545">바닥 높이를 잰다</text>
+
+  <!-- 슬래브 -->
+  <rect x="40" y="125" width="520" height="46" fill="url(#hatch)" stroke="#8a929d"/>
+  <rect x="190" y="136" width="220" height="24" rx="4" fill="#ffffff" opacity="0.85"/>
+  <text x="300" y="153" font-size="15" font-weight="700" fill="#3b4252" text-anchor="middle">슬래브 (콘크리트 바닥판)</text>
+
+  <!-- 아래층 -->
+  <rect x="60" y="171" width="480" height="105" fill="#f5f7fa" stroke="#c9d1db"/>
+  <text x="76" y="262" font-size="17" font-weight="700" fill="#3b4252">아래층 (예: 7F)</text>
+  <!-- 아래층 스캐너: 천장을 잰다 -->
+  <line x1="300" y1="243" x2="286" y2="276" stroke="#3b4252" stroke-width="2.5"/>
+  <line x1="300" y1="243" x2="314" y2="276" stroke="#3b4252" stroke-width="2.5"/>
+  <line x1="300" y1="243" x2="300" y2="276" stroke="#3b4252" stroke-width="2"/>
+  <line x1="300" y1="233" x2="200" y2="171" stroke="#2f6fd6" stroke-width="2" stroke-dasharray="5 4"/>
+  <line x1="300" y1="233" x2="400" y2="171" stroke="#2f6fd6" stroke-width="2" stroke-dasharray="5 4"/>
+  <circle cx="300" cy="235" r="10" fill="#2f6fd6"/>
+  <circle cx="200" cy="171" r="4.5" fill="#2f6fd6"/>
+  <circle cx="400" cy="171" r="4.5" fill="#2f6fd6"/>
+  <text x="410" y="196" font-size="14" font-weight="700" fill="#2f6fd6">천장 높이를 잰다</text>
+
+  <!-- 두께 치수 -->
+  <line x1="578" y1="127" x2="578" y2="169" stroke="#3b4252" stroke-width="2" marker-start="url(#arr)" marker-end="url(#arr)"/>
+  <text x="592" y="143" font-size="17" font-weight="700" fill="#3b4252">두께</text>
+  <text x="592" y="162" font-size="12" fill="#3b4252">= <tspan fill="#d64545">바닥 높이</tspan> − <tspan fill="#2f6fd6">천장 높이</tspan></text>
+
+  <!-- 순서 -->
+  <g font-size="14" fill="#3b4252">
+    <rect x="730" y="18" width="215" height="72" rx="10" fill="#ffffff" stroke="#dde3ea"/>
+    <circle cx="756" cy="54" r="13" fill="#d64545"/>
+    <text x="756" y="59" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+    <text x="778" y="49">위층·아래층을</text>
+    <text x="778" y="69">레이저로 스캔</text>
+
+    <line x1="837" y1="92" x2="837" y2="112" stroke="#3b4252" stroke-width="2" marker-end="url(#arr)"/>
+
+    <rect x="730" y="118" width="215" height="72" rx="10" fill="#ffffff" stroke="#dde3ea"/>
+    <circle cx="756" cy="154" r="13" fill="#d64545"/>
+    <text x="756" y="159" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">2</text>
+    <text x="778" y="149">같은 위치끼리 빼서</text>
+    <text x="778" y="169">두께 계산</text>
+
+    <line x1="837" y1="192" x2="837" y2="212" stroke="#3b4252" stroke-width="2" marker-end="url(#arr)"/>
+
+    <rect x="730" y="218" width="215" height="72" rx="10" fill="#ffffff" stroke="#dde3ea"/>
+    <circle cx="756" cy="254" r="13" fill="#d64545"/>
+    <text x="756" y="259" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+    <text x="778" y="249">설계보다 얇은 방을</text>
+    <text x="778" y="269">찾아서 표시</text>
+  </g>
+</svg>
