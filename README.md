@@ -35,7 +35,7 @@ Python 설치 없이 **받고 → 압축 풀고 → 더블클릭**만 하면 됩
 
 ### 1-1. Python 설치 (처음 한 번)
 
-1. https://www.python.org/downloads/windows/ 에서 **Python 3.10 이상**(권장 3.12)의 *Windows installer (64-bit)* 를 받습니다.
+1. https://www.python.org/downloads/windows/ 에서 **Python 3.11 이상**(권장 3.13)의 *Windows installer (64-bit)* 를 받습니다.
 2. 설치 첫 화면에서 **`Add python.exe to PATH`를 반드시 체크**하고 *Install Now*를 누릅니다.
 
 ### 1-2. 프로그램 받기
@@ -80,7 +80,7 @@ run.bat --server.address 0.0.0.0
 |---|---|
 | `START.bat`이 바로 꺼짐 / `"python" folder is missing` | ZIP 안에서 실행한 경우입니다. 0장의 2번대로 압축을 먼저 푸세요 |
 | 「Windows의 PC 보호」 창 | 「추가 정보」 → 「실행」 |
-| `Python 3.10 or later is required` | 1-1대로 Python을 설치하고 `Add python.exe to PATH`를 체크했는지 확인 |
+| `Python 3.11 or later is required` | 1-1대로 Python을 설치하고 `Add python.exe to PATH`를 체크했는지 확인 |
 | 실행하면 Microsoft Store가 열림 | Windows의 가짜 `python` 바로가기입니다. 1-1대로 python.org 설치본을 설치하세요 |
 | `Installation failed` | 인터넷·회사 프록시 확인 후 다시 실행. 계속 실패하면 `.venv` 폴더를 지우고 다시 실행 |
 | 브라우저가 안 열림 | 브라우저에서 `http://localhost:8501` 직접 입력 |
@@ -246,5 +246,5 @@ git tag v0.1.1 && git push origin v0.1.1
 
 ### 요구 사항
 
-- Python 3.10 ~ 3.14 (휴대용 ZIP은 3.14 포함)
+- Python 3.11 ~ 3.14 (휴대용 ZIP은 3.14 포함)
 - 패키지: `requirements.txt` (streamlit, pandas, numpy, scipy, ezdxf, matplotlib, openpyxl)

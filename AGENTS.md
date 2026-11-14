@@ -16,7 +16,7 @@ py -m venv .venv
 .venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-- `py`가 없으면 `python`을 씁니다. Python 3.10 이상이 필요합니다.
+- `py`가 없으면 `python`을 씁니다. Python 3.11 이상이 필요합니다.
 - PowerShell의 `Activate.ps1`은 실행 정책 때문에 막힐 수 있으니 `.venv\Scripts\python.exe`를 직접 호출하세요.
 - 서버만 띄우고 확인하려면 `--server.headless true`를 붙이고 `http://localhost:8501/_stcore/health`가 `ok`인지 봅니다.
 - 테스트는 14개가 모두 통과해야 합니다 (`test.bat`으로도 실행 가능).

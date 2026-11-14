@@ -30,13 +30,13 @@ goto :eof
 
 :find_python
 set "PY="
-py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul && set "PY=py -3" && exit /b 0
-python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul && set "PY=python" && exit /b 0
+py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul && set "PY=py -3" && exit /b 0
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul && set "PY=python" && exit /b 0
 exit /b 1
 
 :nopython
 echo.
-echo Python 3.10 or later is required.
+echo Python 3.11 or later is required.
 echo Download: https://www.python.org/downloads/windows/
 echo During installation, check "Add python.exe to PATH".
 pause
