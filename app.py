@@ -223,9 +223,18 @@ with results_box:
             st.success(f"검사한 방 {n_judged}개가 모두 기준({limit:g}mm 이상)을 통과했어요.",
                        title="모든 방 통과", icon=":material/check_circle:")
         else:
-            names = ", ".join(f"{r.room}({r.mean_mm:.0f}mm)" for r in bad.itertuples())
-            st.error(f"설계 {design:g}mm, 기준 {limit:g}mm 이상 → 얇은 방: {names}",
-                     title=f"{len(bad)}개 방이 설계보다 얇아요", icon=":material/error:")
+            names = ", ".join(f"{r.room}({r.mean_mm:.0f}mm)" for r in bad.head(5).itertuples())
+            if len(bad) > 5:
+                names += f" 외 {len(bad) - 5}개 (아래 표 참고)"
+            st.error(f"설계 {design:g}mm, 기준 {limit:g}mm 이상 → 가장 얇은 방부터: {names}",
+                     title=f"{len(bad)}개 방이 설계보다 얇아요 (전체 {n_judged}개 중)", icon=":material/error:")
+
+        unknown = judged[judged["judgement"] == "판정불가"]
+        if len(unknown):
+            st.warning(f"{', '.join(unknown['room'])} — 쓸 수 있는 측정값이 없어 판정하지 못했어요. "
+                       "측정점이 너무 적거나 단차·개구부 같은 특수한 곳일 수 있으니 현장에서 확인해 주세요. "
+                       "이유는 '자세히 보기 → 제외된 측정점'에서 볼 수 있어요.",
+                       title=f"판정하지 못한 방 {len(unknown)}개", icon=":material/help:")
 
         c = st.columns(3)
         c[0].metric("평균 두께", f"{sm['mean_mm']:.0f} mm", f"{sm['mean_mm'] - design:+.0f} mm (설계 대비)",
@@ -236,7 +245,7 @@ with results_box:
         else:
             c[1].metric("기준 통과한 점", f"{sm['pass_rate'] * 100:.0f}%", border=True)
         c[2].metric("사용한 측정점", f"{sm['n_valid']} / {sm['n_points']}", border=True,
-                    help="바닥 위 물건·천장 설비 등으로 값이 이상한 점은 자동으로 뺐습니다. "
+                    help="바닥 위 물건, 천장 배관, 단차 등으로 값이 이상한 점은 자동으로 뺐습니다. "
                          "'자세히 보기 → 제외된 측정점'에서 확인할 수 있어요.")
 
         if result.plan is not None:

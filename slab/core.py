@@ -359,11 +359,15 @@ def compute_thickness(upper: pd.DataFrame, lower: pd.DataFrame, s: Settings) -> 
         for i in np.flatnonzero(np.asarray(mask)):
             reasons[i].append(text)
 
-    flag(~upper["valid_floor"].to_numpy(), "상부 바닥 측정 없음")
-    flag((res["match_dist_m"] > s.max_match_dist_m) | no_surface, "하부층 대응점 없음")
-    flag(res["upper_floor_error_mm"].abs() > s.max_surface_error_mm, "상부 바닥 이상(바닥 위 물체 등)")
+    thr = s.max_surface_error_mm
+    flag(~upper["valid_floor"].to_numpy(), "위층 바닥 측정 없음")
+    flag((res["match_dist_m"] > s.max_match_dist_m) | no_surface, "아래층에 같은 위치 측정 없음")
+    # 기준면보다 높은지 낮은지에 따라 짐작되는 원인이 다르다
+    flag(res["upper_floor_error_mm"] > thr, "위층 바닥이 높게 측정(바닥 위 물건 등)")
+    flag(res["upper_floor_error_mm"] < -thr, "위층 바닥이 낮게 측정(단차·개구부 등)")
     if s.method != "interpolate":
-        flag(res["lower_ceiling_error_mm"].abs() > s.max_surface_error_mm, "하부 천장 이상(설비·돌출물 등)")
+        flag(res["lower_ceiling_error_mm"] < -thr, "아래층 천장이 낮게 측정(배관·설비 등)")
+        flag(res["lower_ceiling_error_mm"] > thr, "아래층 천장이 높게 측정(우물천장·개구부 등)")
 
     if s.outlier_mad_k > 0:
         ok = np.array([not r for r in reasons])
@@ -372,7 +376,7 @@ def compute_thickness(upper: pd.DataFrame, lower: pd.DataFrame, s: Settings) -> 
             med = t.median()
             mad = 1.4826 * (t - med).abs().median()
             if mad > 0:
-                flag(ok & ((res["thickness_mm"] - med).abs() > s.outlier_mad_k * mad), "두께 통계 이상치")
+                flag(ok & ((res["thickness_mm"] - med).abs() > s.outlier_mad_k * mad), "두께가 다른 점들과 크게 다름")
 
     res["excluded"] = [bool(r) for r in reasons]
     res["exclude_reason"] = [", ".join(r) for r in reasons]
