@@ -13,7 +13,7 @@ from openpyxl.utils import get_column_letter
 from scipy.spatial import cKDTree
 
 from .core import AnalysisResult
-from .plot import figure_png, plot_plan
+from .plot import figure_png, plot_plan, plot_rooms
 
 POINT_COLUMNS = {
     "point_id": "포인트",
@@ -144,12 +144,17 @@ def build_excel(result: AnalysisResult, meta: dict) -> bytes:
         _format_sheet(wb["포인트별 결과"], "판정")
         _format_sheet(wb["제외 포인트"])
 
-        ws = wb.create_sheet("위치도")
-        img = XLImage(io.BytesIO(png))
-        scale = 1400 / img.width
-        img.width, img.height = img.width * scale, img.height * scale
-        ws.add_image(img, "A1")
+        if result.plan is not None:
+            _add_image(wb.create_sheet("방별 판정도", 1), figure_png(plot_rooms(result, title=title)))
+        _add_image(wb.create_sheet("위치도"), png)
     return buf.getvalue()
+
+
+def _add_image(ws, png: bytes, width: int = 1400):
+    img = XLImage(io.BytesIO(png))
+    scale = width / img.width
+    img.width, img.height = img.width * scale, img.height * scale
+    ws.add_image(img, "A1")
 
 
 _LAYERS = {"적합": ("두께_적합", 3), "미달": ("두께_미달", 1), "제외": ("두께_제외", 8)}

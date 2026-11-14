@@ -112,15 +112,45 @@ def test_demo_data_is_reproducible(tmp_path):
 
 
 def test_plot_3d(sample):
-    from slab.plot3d import plot_3d
+    from slab.plot3d import plot_3d, plot_room_map
 
     upper, lower, plan = sample
     r = analyze(upper, lower, plan)
-    fig = plot_3d(r)
-    names = [t.name or "" for t in fig.data]
-    # 통과·미달 막대, 기준 판이 모두 그려진다
-    assert any(n.startswith("기준 통과") for n in names)
-    assert any(n.startswith("기준 미달") for n in names)
-    assert any(n.startswith("기준 판 125mm") for n in names)
-    bars = sum(len(t.x) for t in fig.data if t.type == "mesh3d" and t.name.startswith("기준 "))
-    assert bars >= 8 * r.summary["n_valid"]
+    names = [t.name or "" for t in plot_3d(r).data]
+    # 방 판정 색(통과 7개·미달 1개)과 기준 높이 판이 그려진다
+    assert "기준 통과 (7개 방)" in names
+    assert "기준 미달 (1개 방)" in names
+    assert "기준 높이 = 125mm" in names
+    rooms = [t for t in plot_room_map(r).data if t.fill == "toself"]
+    assert len(rooms) == len(plan.rooms)
+    assert sum(t.fillcolor == "#f6b8b8" for t in rooms) == 1  # 미달 방 하나만 빨갛게
+
+
+def test_triangulate_concave():
+    from slab.plot3d import _triangulate
+
+    # ㄱ자 방: 넓이 3, 삼각형 4개
+    poly = np.array([[0, 0], [2, 0], [2, 1], [1, 1], [1, 2], [0, 2]], float)
+    tris = _triangulate(poly)
+    def tri_area(a, b, c):
+        (x1, y1), (x2, y2) = poly[b] - poly[a], poly[c] - poly[a]
+        return abs(x1 * y2 - x2 * y1) / 2
+
+    area = sum(tri_area(*t) for t in tris)
+    assert len(tris) == 4 and area == pytest.approx(3.0)
+
+
+def test_html_report_sections(sample):
+    from slab.report_html import PRESETS, ReportSpec, build_html
+
+    upper, lower, plan = sample
+    r = analyze(upper, lower, plan)
+    meta = {"동": "데모동", "상부층": "8F", "하부층": "7F"}
+    simple = build_html(r, meta, ReportSpec("간단 보고서", PRESETS["간단 보고서"]))
+    detail = build_html(r, meta, ReportSpec("상세 보고서", PRESETS["상세 보고서"], notes="코어 확인 <예정>",
+                                            custom=[("현장 사진", "별첨")], author="담당"))
+    assert "101호_침실2" in simple and "두께 분포" not in simple
+    assert "두께 분포" in detail and "부록: 전체 측정점 표" in detail
+    assert "현장 사진" in detail and "&lt;예정&gt;" in detail  # 직접 쓴 내용은 이스케이프
+    only = build_html(r, meta, ReportSpec("간단 보고서", ["summary"]))
+    assert "방별 판정도" not in only
