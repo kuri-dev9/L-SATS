@@ -1,6 +1,9 @@
 """실별 슬래브 두께 자동 산출 - 웹 화면 (Streamlit)
 
 실행:  streamlit run app.py
+
+화면은 처음 쓰는 사람 기준으로 위에서 아래로 ① 파일 올리기 → ② 결과 → ③ 파일 받기 순서이고,
+전문 설정과 상세 표는 맨 아래 '자세히 보기'에 둔다.
 """
 from __future__ import annotations
 
@@ -10,34 +13,34 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from slab import Settings, analyze, load_cad, read_table, standardize_grid
-from slab.core import DEFAULT_COLUMNS
+from slab import Settings, __version__, analyze, load_cad, read_table, standardize_grid
+from slab.core import DEFAULT_COLUMNS, OUTSIDE_ROOM
 from slab.plot import plot_plan
 from slab.report import build_dxf, build_excel, points_table, rooms_table, summary_rows
-from slab import __version__
 
-SAMPLE_DIR = Path(__file__).parent / "demo_data"  # 가상 데모 데이터 (tools/make_demo_data.py)
-SAMPLE = {
-    "cad": SAMPLE_DIR / "report_merge_8F.dxf",
-    "upper": SAMPLE_DIR / "grid_analysis_floor_level_8F.csv",
-    "lower": SAMPLE_DIR / "grid_analysis_floor_level_7F.csv",
+DEMO_DIR = Path(__file__).parent / "demo_data"  # 가상 데모 데이터 (tools/make_demo_data.py)
+DEMO = {
+    "cad": DEMO_DIR / "report_merge_8F.dxf",
+    "upper": DEMO_DIR / "grid_analysis_floor_level_8F.csv",
+    "lower": DEMO_DIR / "grid_analysis_floor_level_7F.csv",
 }
 COLUMN_LABELS = {
     "point_id": "포인트 번호",
     "x": "X 좌표",
     "y": "Y 좌표",
-    "floor_z": "바닥 Z (콘크리트 윗면)",
-    "ceiling_z": "천장 Z",
+    "floor_z": "바닥 높이 (콘크리트 윗면)",
+    "ceiling_z": "천장 높이",
     "floor_error": "바닥 기준면 편차",
     "ceiling_error": "천장 기준면 편차",
 }
+METHODS = {"nearest": "가장 가까운 점", "interpolate": "천장면 보간"}
 NONE = "(없음)"
 
-st.set_page_config(page_title="실별 슬래브 두께 자동 산출", layout="wide")
+st.set_page_config(page_title="슬래브 두께 분석기", page_icon=":material/layers:", layout="wide")
 
 
 class _File:
-    """업로드 파일과 샘플 파일을 같은 방식으로 다루기 위한 래퍼."""
+    """업로드 파일과 데모 파일을 같은 방식으로 다루기 위한 래퍼."""
 
     def __init__(self, name: str, data: bytes):
         self.name, self.data = name, data
@@ -46,12 +49,8 @@ class _File:
         return self.data
 
 
-def _pick(uploaded, sample_path: Path, use_sample: bool) -> _File | None:
-    if uploaded is not None:
-        return _File(uploaded.name, uploaded.getvalue())
-    if use_sample:
-        return _File(sample_path.name, sample_path.read_bytes())
-    return None
+def _demo(key: str) -> _File:
+    return _File(DEMO[key].name, DEMO[key].read_bytes())
 
 
 @st.cache_data(show_spinner=False)
@@ -75,194 +74,256 @@ def _column_mapping(raw: pd.DataFrame, key: str) -> dict:
     return mapping
 
 
-st.title("슬래브 두께 분석기")
-st.caption(
-    f"v{__version__} | 두께 = 상부층 바닥(콘크리트 윗면) Z − 하부층 천장 Z | "
-    "좌표 기준 대응점 매칭 · 이상값 자동 제외 · 실별 집계 · Excel/DXF 출력"
-)
+st.title("슬래브 두께 분석기", icon=":material/layers:")
+st.caption(f"위층 바닥과 아래층 천장의 높이 차이로 방마다 슬래브 두께를 계산합니다 · v{__version__}")
 
-tab_input, tab_cad, tab_result, tab_save = st.tabs(
-    ["파일 및 데이터", "통합 CAD·실 경계", "산출 및 검토", "결과 저장"]
-)
+# ---------------------------------------------------------------- ① 파일 올리기
+with st.container(border=True):
+    st.subheader("① 파일 올리기", icon=":material/upload_file:")
+    c1, c2, c3 = st.columns(3)
+    cad_up = c1.file_uploader(
+        "도면 (DXF)", type=["dxf"],
+        help="방 경계선, 방 이름, 측정점 번호(P001…)가 들어 있는 통합 CAD 도면")
+    upper_up = c2.file_uploader(
+        "위층 스캔 (CSV·엑셀)", type=["csv", "xlsx", "xlsm"],
+        help="예: grid_analysis_floor_level_8F.csv — 위층 바닥 높이를 씁니다")
+    lower_up = c3.file_uploader(
+        "아래층 스캔 (CSV·엑셀)", type=["csv", "xlsx", "xlsm"],
+        help="예: grid_analysis_floor_level_7F.csv — 아래층 천장 높이를 씁니다")
 
-# ---------------------------------------------------------------- 1. 입력
-with tab_input:
-    st.subheader("입력 파일")
-    cad_up = st.file_uploader(
-        "통합 CAD DXF (실 경계 폴리라인 + 실명 문자 + 상부층 측정점 라벨)", type=["dxf"],
-        help="실 경계(닫힌 폴리라인)와 실명 TEXT/MTEXT는 같은 레이어에 있어야 합니다. "
-             "도면 좌표를 측량 좌표로 맞추기 위해 상부층 측정점 라벨(P001 등)이 3개 이상 필요합니다.")
-    c1, c2 = st.columns(2)
-    upper_up = c1.file_uploader("상부층 레이저 스캔 (바닥 Z 사용)", type=["csv", "xlsx", "xlsm"])
-    lower_up = c2.file_uploader("하부층 레이저 스캔 (천장 Z 사용)", type=["csv", "xlsx", "xlsm"])
+    use_demo = not (cad_up or upper_up or lower_up)
+    if use_demo:
+        st.info("파일을 올리기 전이라 **연습용 데모 데이터**(가상)로 보여주고 있어요. "
+                "실제 파일 3개를 올리면 결과가 바로 바뀝니다.", icon=":material/school:")
 
-    no_upload = not (cad_up or upper_up or lower_up)
-    use_sample = st.checkbox(
-        "업로드하지 않은 파일은 데모 데이터 사용 (가상 데이터 8F/7F)", value=no_upload,
-        help="demo_data 폴더의 가상 데이터: report_merge_8F.dxf, grid_analysis_floor_level_8F.csv / 7F.csv")
-
-    st.divider()
-    st.subheader("현장 및 층 정보")
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3, m4, m5 = st.columns(5)
     meta = {
-        "동": m1.text_input("동", "데모동" if use_sample else ""),
-        "상부층": m2.text_input("상부층", "8F" if use_sample else ""),
-        "하부층": m3.text_input("하부층", "7F" if use_sample else ""),
+        "동": m1.text_input("동", "데모동" if use_demo else "", placeholder="예: 101동"),
+        "상부층": m2.text_input("위층", "8F" if use_demo else "", placeholder="예: 8F"),
+        "하부층": m3.text_input("아래층", "7F" if use_demo else "", placeholder="예: 7F"),
     }
+    design = m4.number_input("설계 두께 (mm)", 0.0, 1000.0, 135.0, 5.0,
+                             help="도면상 슬래브 두께")
+    tol = m5.number_input("허용 오차 (mm)", 0.0, 200.0, 10.0, 1.0,
+                          help="설계보다 이만큼 얇아도 적합으로 봅니다. "
+                               "예: 설계 135, 허용 10 → 125mm 이상이면 적합")
 
-    st.divider()
-    st.subheader("판정 기준")
-    s1, s2, s3 = st.columns(3)
-    design = s1.number_input("설계 슬래브 두께 (mm)", 0.0, 1000.0, 135.0, 5.0)
-    tol = s2.number_input("허용 부족량 (mm)", 0.0, 200.0, 10.0, 1.0,
-                          help="두께 ≥ 설계 − 허용 부족량 이면 적합. 기준이 정해지면 수정하세요.")
-    method = s3.radio("대응 방식", ["nearest", "interpolate"], horizontal=True,
-                      format_func={"nearest": "최근접 대응점", "interpolate": "하부 천장면 보간"}.get,
-                      help="최근접: 가장 가까운 하부층 점의 천장 Z 사용. "
-                           "보간: 하부층 천장점으로 면을 만들어 상부층 점 위치의 천장 Z를 계산.")
-    with st.expander("이상값 제외 기준"):
-        e1, e2, e3 = st.columns(3)
-        max_dist = e1.number_input("대응점 최대 거리 (m)", 0.01, 5.0, 0.2, 0.05,
-                                   help="상·하부층 점이 이보다 멀면 같은 위치로 보지 않습니다.")
-        max_err = e2.number_input("기준면 편차 제외 기준 (mm)", 1.0, 1000.0, 30.0, 5.0,
-                                  help="층 기준면보다 이만큼 높거나 낮은 바닥/천장 측정값은 "
-                                       "물체·설비 등으로 보고 제외합니다.")
-        mad_k = e3.number_input("통계 이상치 기준 (MAD 배수, 0=미사용)", 0.0, 20.0, 5.0, 0.5)
+if use_demo:
+    upper_f, lower_f, cad_f = _demo("upper"), _demo("lower"), _demo("cad")
+else:
+    upper_f = _File(upper_up.name, upper_up.getvalue()) if upper_up else None
+    lower_f = _File(lower_up.name, lower_up.getvalue()) if lower_up else None
+    cad_f = _File(cad_up.name, cad_up.getvalue()) if cad_up else None
+    missing = [n for n, f in (("위층 스캔", upper_f), ("아래층 스캔", lower_f)) if f is None]
+    if missing:
+        st.warning(f"**{', '.join(missing)}** 파일을 올려 주세요. 위층·아래층 스캔이 모두 있어야 계산할 수 있어요.",
+                   icon=":material/upload:")
+        st.stop()
+    if cad_f is None:
+        st.caption("도면(DXF)이 없으면 방별로 나누지 않고 전체를 한꺼번에 계산합니다.")
+
+# 결과를 위에, 상세 설정을 아래에 보여주되 계산은 설정을 읽은 뒤에 한다
+results_box = st.container()
+download_box = st.container()
+
+st.space("medium")
+st.subheader("자세히 보기", icon=":material/tune:")
+st.caption("담당자·전문가용입니다. 보통은 건드리지 않아도 됩니다.")
+tab_rooms, tab_points, tab_excluded, tab_settings = st.tabs(
+    ["방 이름 고치기", "포인트별 결과", "제외된 측정점", "계산 설정·도면 정합"])
+
+with tab_settings:
+    s1, s2 = st.columns([1, 2])
+    method = s1.segmented_control(
+        "위·아래층 점 맞추는 방법", list(METHODS), default="nearest", required=True, key="method",
+        format_func=METHODS.get,
+        help="위층과 아래층은 측정 위치가 조금씩 달라서 좌표로 같은 위치를 찾습니다. "
+             "가장 가까운 점: 아래층에서 가장 가까운 점의 천장 높이를 씁니다. "
+             "천장면 보간: 아래층 천장점들로 면을 만들어 위층 점 위치의 천장 높이를 계산합니다.")
+    st.markdown("**이상한 측정값 자동 제외 기준**")
+    e1, e2, e3 = st.columns(3)
+    max_dist = e1.number_input("같은 위치로 볼 최대 거리 (m)", 0.01, 5.0, 0.2, 0.05,
+                               help="위·아래층 점이 이보다 멀면 같은 위치로 보지 않습니다.")
+    max_err = e2.number_input("기준면에서 벗어난 정도 (mm)", 1.0, 1000.0, 30.0, 5.0,
+                              help="바닥·천장이 층 기준 높이보다 이만큼 높거나 낮으면 "
+                                   "바닥 위 물건·천장 설비 등으로 보고 제외합니다.")
+    mad_k = e3.number_input("통계 이상치 기준 (MAD 배수, 0=사용 안 함)", 0.0, 20.0, 5.0, 0.5)
     settings = Settings(design, tol, method, max_dist, max_err, mad_k)
 
-    upper_f = _pick(upper_up, SAMPLE["upper"], use_sample)
-    lower_f = _pick(lower_up, SAMPLE["lower"], use_sample)
-    cad_f = _pick(cad_up, SAMPLE["cad"], use_sample)
-
+    st.markdown("**입력 파일 열 지정**")
+    st.caption("파일의 열 이름이 기본 형식과 다를 때만 바꾸세요.")
     mappings = {}
-    if upper_f and lower_f:
-        st.divider()
-        st.subheader("입력 파일 열 매핑")
-        for label, key, f in (("상부층", "upper", upper_f), ("하부층", "lower", lower_f)):
-            raw = _raw_table(f.name, f.data)
-            with st.expander(f"{label}: {f.name}  ({len(raw)}행)"):
-                mappings[key] = _column_mapping(raw, key)
-                st.dataframe(raw.head(5), width="stretch")
-
-if not (upper_f and lower_f):
-    for t in (tab_cad, tab_result, tab_save):
-        t.info("상부층·하부층 스캔 파일을 올리거나 샘플 데이터 사용을 선택하세요.")
-    st.stop()
+    for label, key, f in (("위층", "upper", upper_f), ("아래층", "lower", lower_f)):
+        raw = _raw_table(f.name, f.data)
+        with st.expander(f"{label}: {f.name} ({len(raw)}행)"):
+            mappings[key] = _column_mapping(raw, key)
+            st.dataframe(raw.head(5), width="stretch")
 
 try:
     upper = standardize_grid(_raw_table(upper_f.name, upper_f.data), mappings.get("upper"))
     lower = standardize_grid(_raw_table(lower_f.name, lower_f.data), mappings.get("lower"))
 except ValueError as e:
-    st.error(str(e))
+    results_box.error(str(e), title="파일을 읽지 못했어요")
     st.stop()
 
-# ---------------------------------------------------------------- 2. CAD·실 경계
 plan = None
 room_names: dict[str, str] = {}
-with tab_cad:
+with tab_rooms:
     if cad_f is None:
-        st.info("DXF가 없으면 실 구분 없이 전체 포인트로만 산출합니다.")
+        st.caption("도면(DXF)을 올리면 방 이름을 고칠 수 있어요.")
     else:
         digest = hashlib.md5(cad_f.data).hexdigest()
         base = _cad(digest, cad_f.data, None)
         if not base.polygon_layers:
-            st.error("DXF에서 닫힌 폴리라인(실 경계)을 찾지 못했습니다.")
+            results_box.error("도면에서 방 경계선(닫힌 폴리라인)을 찾지 못했어요. 도면 파일을 확인해 주세요.",
+                              title="도면 문제")
         else:
-            layer = st.selectbox("실 경계·실명 레이어", base.polygon_layers,
-                                 index=base.polygon_layers.index(base.room_layer))
+            with tab_settings:
+                layer = st.selectbox("방 경계·방 이름 레이어", base.polygon_layers,
+                                     index=base.polygon_layers.index(base.room_layer))
             plan = _cad(digest, cad_f.data, layer)
-            st.caption(f"실 {len(plan.rooms)}개 · 측정점 라벨 {len(plan.labels)}개 인식")
-
-            st.markdown("**실명 편집** — `실명` 칸을 고치면 결과표·위치도·DXF에 반영됩니다.")
+            st.caption("도면의 방 이름이 틀렸거나 비어 있으면(예: `실_08`) **새 이름** 칸을 눌러 고치세요. "
+                       "결과표·위치도·내려받는 파일에 모두 반영됩니다.")
             edit = st.data_editor(
                 pd.DataFrame({"ID": [r.room_id for r in plan.rooms],
-                              "도면 실명": [r.name for r in plan.rooms],
-                              "실명": [r.name for r in plan.rooms]}),
-                disabled=["ID", "도면 실명"], hide_index=True, width="stretch",
+                              "도면의 이름": [r.name for r in plan.rooms],
+                              "새 이름": [r.name for r in plan.rooms]}),
+                disabled=["ID", "도면의 이름"], hide_index=True, width="stretch",
                 key=f"rooms_{digest}_{layer}")
             room_names = {rid: (name or "").strip() or orig
-                          for rid, orig, name in zip(edit["ID"], edit["도면 실명"], edit["실명"])}
+                          for rid, orig, name in zip(edit["ID"], edit["도면의 이름"], edit["새 이름"])}
 
 try:
     result = analyze(upper, lower, plan, settings, room_names)
 except ValueError as e:
-    st.error(str(e))
+    results_box.error(str(e), title="계산하지 못했어요")
     st.stop()
 
-with tab_cad:
+sm = result.summary
+rooms = result.rooms
+limit = design - tol
+title = f"{meta['동']} {meta['상부층']}-{meta['하부층']} 슬래브 두께".strip()
+
+# ---------------------------------------------------------------- ② 결과 한눈에
+with results_box:
+    with st.container(border=True):
+        st.subheader("② 결과 한눈에 보기", icon=":material/fact_check:")
+        judged = rooms[rooms["room"] != OUTSIDE_ROOM]
+        bad = judged[judged["judgement"] == "미달"].sort_values("mean_mm")
+        n_ok = int((judged["judgement"] == "적합").sum())
+        n_judged = int(judged["judgement"].isin(["적합", "미달"]).sum())
+        if result.plan is None:
+            if sm["mean_mm"] >= limit:
+                st.success(f"전체 평균 {sm['mean_mm']:.0f}mm로 기준({limit:g}mm 이상)을 통과했어요.",
+                           title="통과", icon=":material/check_circle:")
+            else:
+                st.error(f"전체 평균 {sm['mean_mm']:.0f}mm로 기준({limit:g}mm 이상)보다 얇아요.",
+                         title="미달", icon=":material/error:")
+        elif bad.empty:
+            st.success(f"검사한 방 {n_judged}개가 모두 기준({limit:g}mm 이상)을 통과했어요.",
+                       title="모든 방 통과", icon=":material/check_circle:")
+        else:
+            names = ", ".join(f"{r.room}({r.mean_mm:.0f}mm)" for r in bad.itertuples())
+            st.error(f"설계 {design:g}mm, 기준 {limit:g}mm 이상 → 얇은 방: {names}",
+                     title=f"{len(bad)}개 방이 설계보다 얇아요", icon=":material/error:")
+
+        c = st.columns(3)
+        c[0].metric("평균 두께", f"{sm['mean_mm']:.0f} mm", f"{sm['mean_mm'] - design:+.0f} mm (설계 대비)",
+                    border=True, help=f"제외된 점을 뺀 {sm['n_valid']}개 측정점의 평균")
+        if result.plan is not None:
+            c[1].metric("기준 통과한 방", f"{n_ok} / {n_judged}", border=True,
+                        help="방 안 측정점들의 평균 두께가 기준 이상이면 통과")
+        else:
+            c[1].metric("기준 통과한 점", f"{sm['pass_rate'] * 100:.0f}%", border=True)
+        c[2].metric("사용한 측정점", f"{sm['n_valid']} / {sm['n_points']}", border=True,
+                    help="바닥 위 물건·천장 설비 등으로 값이 이상한 점은 자동으로 뺐습니다. "
+                         "'자세히 보기 → 제외된 측정점'에서 확인할 수 있어요.")
+
+        if result.plan is not None:
+            st.markdown("**방별 결과** (얇은 방이 위에 옵니다)")
+            view = rooms.assign(
+                order=rooms["judgement"].map({"미달": 0, "판정불가": 1, "적합": 2}),
+            ).sort_values(["order", "mean_mm"])
+            view = pd.DataFrame({
+                "방": view["room"],
+                "판정": view["judgement"].map(
+                    {"적합": "✅ 적합", "미달": "❌ 미달", "판정불가": "– 측정값 없음"}),
+                "평균 두께(mm)": view["mean_mm"].round(0),
+                "설계 대비(mm)": view["mean_dev_mm"].round(0),
+                "가장 얇은 곳(mm)": view["min_mm"].round(0),
+                "측정점": view["n_valid"].astype(str) + " / " + view["n_points"].astype(str),
+            })
+            st.dataframe(
+                view, hide_index=True, width="stretch", alt="방별 슬래브 두께 판정표",
+                column_config={
+                    "평균 두께(mm)": st.column_config.NumberColumn(format="%d"),
+                    "설계 대비(mm)": st.column_config.NumberColumn(format="%+d"),
+                    "가장 얇은 곳(mm)": st.column_config.NumberColumn(format="%d"),
+                })
+
+        st.markdown("**위치도**")
+        st.caption("점의 색: :red[빨간색]일수록 설계보다 얇고, :blue[파란색]일수록 두껍습니다. "
+                   "빨간 동그라미는 기준 미달, 회색 X는 제외된 점입니다. 숫자는 두께(mm)입니다.")
+        st.pyplot(plot_plan(result, True, title), width="stretch", alt="방별 측정점 두께 위치도")
+
+# ---------------------------------------------------------------- ③ 파일 받기
+stem = f"{meta['동']}_{meta['상부층']}-{meta['하부층']}_슬래브두께".replace(" ", "").strip("_") or "슬래브두께"
+with download_box:
+    with st.container(border=True):
+        st.subheader("③ 결과 파일 받기", icon=":material/download:")
+        d = st.columns(3)
+        d[0].download_button(
+            "엑셀 보고서 받기", lambda: build_excel(result, meta), f"{stem}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", icon=":material/table_view:", width="stretch", on_click="ignore")
+        d[1].download_button(
+            "CAD 도면(DXF) 받기", lambda: build_dxf(result), f"{stem}.dxf", "application/dxf",
+            icon=":material/architecture:", width="stretch", on_click="ignore")
+        d[2].download_button(
+            "포인트 목록(CSV) 받기", lambda: points_table(result).to_csv(index=False).encode("utf-8-sig"),
+            f"{stem}_포인트.csv", "text/csv", icon=":material/list:", width="stretch", on_click="ignore")
+        st.caption("엑셀: 요약 · 방별 결과 · 포인트별 결과 · 제외된 점 · 위치도 그림 / "
+                   "DXF: 원본 도면 위에 두께 값과 판정을 색으로 표시")
+
+# ---------------------------------------------------------------- 자세히 보기
+with tab_points:
+    pt = points_table(result)
+    flt = st.pills("판정", ["적합", "미달", "제외"], selection_mode="multi", default=["적합", "미달", "제외"],
+                  key="point_filter")
+    st.dataframe(pt[pt["판정"].isin(flt or [])], hide_index=True, width="stretch", alt="포인트별 두께 결과")
+    st.markdown("**방별 상세 통계**")
+    st.dataframe(rooms_table(result), hide_index=True, width="stretch", alt="방별 상세 통계",
+                 column_config={c: st.column_config.NumberColumn(format="%.1f")
+                                for c in ("평균(mm)", "최소(mm)", "최대(mm)", "표준편차(mm)", "평균-설계(mm)")})
+
+with tab_excluded:
+    ex = result.points[result.points["excluded"]]
+    if ex.empty:
+        st.caption("제외된 측정점이 없습니다.")
+    else:
+        reasons = ex["exclude_reason"].str.split(", ").explode().value_counts()
+        st.caption(f"전체 {sm['n_points']}개 중 {len(ex)}개를 계산에서 뺐습니다. 이유별 개수:")
+        st.dataframe(reasons.rename_axis("이유").reset_index(name="개수"), hide_index=True,
+                     alt="제외 이유별 개수")
+        st.dataframe(points_table(result).loc[ex.index, ["포인트", "실명", "두께(mm)", "제외 사유"]],
+                     hide_index=True, width="stretch", alt="제외된 측정점 목록")
+
+with tab_settings:
     t = result.transform
     if t is not None:
-        st.markdown("**도면 ↔ 측량 좌표 정합**")
+        st.markdown("**도면 ↔ 측량 좌표 맞춤**")
+        unit = {1.0: "1 : 1", 0.001: "mm → m"}.get(round(t.scale, 5), f"{t.scale:.6f}")
         c = st.columns(4)
         c[0].metric("방식", t.method)
         c[1].metric("회전각", f"{t.rotation_deg:.3f}°")
-        unit = {1.0: "1 : 1", 0.001: "mm → m"}.get(round(t.scale, 5), f"{t.scale:.6f}")
         c[2].metric("축척", unit)
-        c[3].metric("잔차 RMS", f"{t.rms_m * 1000:.1f} mm")
+        c[3].metric("오차(RMS)", f"{t.rms_m * 1000:.1f} mm")
         if t.rms_m > 0.05:
-            st.warning("정합 잔차가 큽니다. 도면의 측정점 라벨이 상부층 파일과 같은 번호인지 확인하세요.")
-        outside = (result.points["room"] == "(실 외부)").sum()
+            results_box.warning("도면과 스캔 좌표가 잘 맞지 않아요. 도면의 측정점 번호가 위층 스캔 파일과 "
+                                "같은지 담당자에게 확인해 주세요.", icon=":material/warning:")
+        outside = int((result.points["room"] == OUTSIDE_ROOM).sum())
         if outside:
-            st.caption(f"실 경계 밖 포인트 {outside}개는 '(실 외부)'로 집계됩니다.")
-
-# ---------------------------------------------------------------- 3. 산출 및 검토
-with tab_result:
-    sm = result.summary
-    c = st.columns(6)
-    c[0].metric("평균 두께", f"{sm['mean_mm']:.1f} mm", f"{sm['mean_mm'] - design:+.1f} mm (설계 대비)",
-                delta_color="normal")
-    c[1].metric("중앙값", f"{sm['median_mm']:.1f} mm")
-    c[2].metric("최소 / 최대", f"{sm['min_mm']:.0f} / {sm['max_mm']:.0f}")
-    c[3].metric("유효점 / 전체", f"{sm['n_valid']} / {sm['n_points']}")
-    c[4].metric("미달점", f"{sm['n_below']}")
-    c[5].metric("적합률", f"{sm['pass_rate'] * 100:.1f}%")
-
-    st.subheader("실별 결과")
-    rt = rooms_table(result)
-    rt = rt.astype(object).where(rt.notna(), "-")
-    st.dataframe(
-        rt.style.apply(lambda r: ["background-color:#f8d7da" if r["판정"] == "미달" else ""] * len(r), axis=1)
-        .format(precision=1, na_rep="-"),
-        hide_index=True, width="stretch")
-
-    st.subheader("포인트 위치도")
-    show_values = st.checkbox("두께 값 표시", value=True)
-    title = f"{meta['동']} {meta['상부층']}-{meta['하부층']} 슬래브 두께".strip()
-    st.pyplot(plot_plan(result, show_values, title), width="stretch")
-
-    st.subheader("포인트별 결과")
-    pt = points_table(result)
-    flt = st.multiselect("판정 필터", ["적합", "미달", "제외"], ["적합", "미달", "제외"])
-    st.dataframe(pt[pt["판정"].isin(flt)], hide_index=True, width="stretch")
-
-    reasons = result.points.loc[result.points["excluded"], "exclude_reason"].str.split(", ").explode()
-    if len(reasons):
-        st.caption("제외 사유: " + " · ".join(f"{k} {v}개" for k, v in reasons.value_counts().items()))
-
-# ---------------------------------------------------------------- 4. 결과 저장
-with tab_save:
-    stem = f"{meta['동']}_{meta['상부층']}-{meta['하부층']}_슬래브두께".replace(" ", "")
+            st.caption(f"방 경계 밖 측정점 {outside}개는 '{OUTSIDE_ROOM}'으로 따로 집계합니다.")
+    st.markdown("**계산 설정 요약**")
     st.dataframe(pd.DataFrame(summary_rows(result, meta), columns=["항목", "값"]).astype(str),
-                 hide_index=True, width="stretch")
-    fingerprint = hashlib.md5(repr((
-        upper_f.data, lower_f.data, cad_f.data if cad_f else None,
-        settings, meta, sorted(room_names.items()), plan.room_layer if plan else None,
-    )).encode()).hexdigest()
-    if st.button("결과 파일 만들기", type="primary"):
-        with st.spinner("결과 파일 생성 중..."):
-            st.session_state["outputs"] = (fingerprint, {
-                "xlsx": build_excel(result, meta),
-                "dxf": build_dxf(result),
-                "csv": points_table(result).to_csv(index=False).encode("utf-8-sig"),
-            })
-    saved = st.session_state.get("outputs")
-    if saved and saved[0] != fingerprint:
-        st.info("입력이나 기준이 바뀌었습니다. '결과 파일 만들기'를 다시 눌러 주세요.")
-    elif saved:
-        out = saved[1]
-        c = st.columns(3)
-        c[0].download_button("Excel 결과표 (요약·실별·포인트별·위치도)", out["xlsx"], f"{stem}.xlsx",
-                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        c[1].download_button("결과 DXF (원본 도면 + 두께 레이어)", out["dxf"], f"{stem}.dxf",
-                             "application/dxf")
-        c[2].download_button("포인트별 CSV", out["csv"], f"{stem}_포인트.csv", "text/csv")
+                 hide_index=True, width="stretch", alt="계산 설정 요약")
