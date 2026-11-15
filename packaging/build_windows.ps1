@@ -53,6 +53,8 @@ Copy-Item (Join-Path $PSScriptRoot 'check_requirements.py') (Join-Path $pkg 'too
 $version = if ($env:GITHUB_REF_NAME -match '^v') { $env:GITHUB_REF_NAME } else { 'dev-' + (git -C $root rev-parse --short HEAD) }
 Set-Content -Encoding ascii -NoNewline (Join-Path $pkg 'VERSION') $version
 Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
+Write-Host "version: [$version]"
+Get-ChildItem -Force $pkg | ForEach-Object { Write-Host "pkg: $($_.Name)" }
 
 # 5) 압축: 전체(Python 포함)와 업데이트용(프로그램 파일만, UPDATE.bat 이 받는다)
 # (Compress-Archive 는 일부 파일을 빠뜨려서 Python zipfile 로 만든다)
