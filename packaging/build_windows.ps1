@@ -49,28 +49,10 @@ Copy-Item (Join-Path $root 'requirements.txt') $pkg
 New-Item -ItemType Directory -Force (Join-Path $pkg 'tools') | Out-Null
 Copy-Item (Join-Path $PSScriptRoot 'update.ps1') (Join-Path $pkg 'tools')
 Copy-Item (Join-Path $PSScriptRoot 'check_requirements.py') (Join-Path $pkg 'tools')
+Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
+
+# 5) VERSION 쓰기와 압축: 전체(Python 포함) + 업데이트용(프로그램 파일만, UPDATE.bat 이 받는다)
 # 버전: 태그 빌드면 태그(v0.1.5), 아니면 커밋 해시. UPDATE.bat 이 이 값으로 최신인지 판단한다.
 $version = if ($env:GITHUB_REF_NAME -match '^v') { $env:GITHUB_REF_NAME } else { 'dev-' + (git -C $root rev-parse --short HEAD) }
-Set-Content -Encoding ascii -NoNewline (Join-Path $pkg 'VERSION') $version
-Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
-Write-Host "version: [$version]"
-Get-ChildItem -Force $pkg | ForEach-Object { Write-Host "pkg: $($_.Name)" }
-
-# 5) 압축: 전체(Python 포함)와 업데이트용(프로그램 파일만, UPDATE.bat 이 받는다)
-# (Compress-Archive 는 일부 파일을 빠뜨려서 Python zipfile 로 만든다)
-function Zip([string]$parent, [string]$name) {
-    $base = Join-Path $dist ($name -replace '\.zip$', '')
-    python -c "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', sys.argv[2], 'L-SATS')" $base $parent
-    if ($LASTEXITCODE -ne 0) { throw "zip failed: $name" }
-}
-$out = Join-Path $dist 'L-SATS-windows.zip'
-Zip $dist 'L-SATS-windows.zip'
-'full   {0:N0} MB' -f ((Get-Item $out).Length / 1MB) | Write-Host
-
-$upd = Join-Path $dist 'update\L-SATS'
-New-Item -ItemType Directory -Force $upd | Out-Null
-Get-ChildItem $pkg -Force | Where-Object { $_.Name -ne 'python' } | Copy-Item -Recurse -Destination $upd
-$out = Join-Path $dist 'L-SATS-update.zip'
-Zip (Join-Path $dist 'update') 'L-SATS-update.zip'
-'update {0:N2} MB' -f ((Get-Item $out).Length / 1MB) | Write-Host
-python -c "import zipfile, sys; print(*zipfile.ZipFile(sys.argv[1]).namelist(), sep='\n')" $out
+python (Join-Path $PSScriptRoot 'make_zips.py') $pkg $version
+if ($LASTEXITCODE -ne 0) { throw 'make_zips.py failed' }
