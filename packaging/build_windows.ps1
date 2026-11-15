@@ -55,13 +55,20 @@ Set-Content -Encoding ascii -NoNewline (Join-Path $pkg 'VERSION') $version
 Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
 
 # 5) 압축: 전체(Python 포함)와 업데이트용(프로그램 파일만, UPDATE.bat 이 받는다)
+# (Compress-Archive 는 일부 파일을 빠뜨려서 Python zipfile 로 만든다)
+function Zip([string]$parent, [string]$name) {
+    $base = Join-Path $dist ($name -replace '\.zip$', '')
+    python -c "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', sys.argv[2], 'L-SATS')" $base $parent
+    if ($LASTEXITCODE -ne 0) { throw "zip failed: $name" }
+}
 $out = Join-Path $dist 'L-SATS-windows.zip'
-Compress-Archive -Path $pkg -DestinationPath $out -CompressionLevel Optimal
+Zip $dist 'L-SATS-windows.zip'
 'full   {0:N0} MB' -f ((Get-Item $out).Length / 1MB) | Write-Host
 
 $upd = Join-Path $dist 'update\L-SATS'
 New-Item -ItemType Directory -Force $upd | Out-Null
 Get-ChildItem $pkg -Force | Where-Object { $_.Name -ne 'python' } | Copy-Item -Recurse -Destination $upd
 $out = Join-Path $dist 'L-SATS-update.zip'
-Compress-Archive -Path $upd -DestinationPath $out -CompressionLevel Optimal
+Zip (Join-Path $dist 'update') 'L-SATS-update.zip'
 'update {0:N2} MB' -f ((Get-Item $out).Length / 1MB) | Write-Host
+python -c "import zipfile, sys; print(*zipfile.ZipFile(sys.argv[1]).namelist(), sep='\n')" $out
