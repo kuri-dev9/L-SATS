@@ -43,10 +43,25 @@ Copy-Item -Recurse (Join-Path $root 'demo_data') $pkg
 New-Item -ItemType Directory -Force (Join-Path $pkg '.streamlit') | Out-Null
 Copy-Item (Join-Path $root '.streamlit\config.toml') (Join-Path $pkg '.streamlit')
 Copy-Item (Join-Path $PSScriptRoot 'START.bat') $pkg
+Copy-Item (Join-Path $PSScriptRoot 'UPDATE.bat') $pkg
 Copy-Item (Join-Path $PSScriptRoot 'HOW-TO-USE.txt') $pkg
+Copy-Item (Join-Path $root 'requirements.txt') $pkg
+New-Item -ItemType Directory -Force (Join-Path $pkg 'tools') | Out-Null
+Copy-Item (Join-Path $PSScriptRoot 'update.ps1') (Join-Path $pkg 'tools')
+Copy-Item (Join-Path $PSScriptRoot 'check_requirements.py') (Join-Path $pkg 'tools')
+# 버전: 태그 빌드면 태그(v0.1.5), 아니면 커밋 해시. UPDATE.bat 이 이 값으로 최신인지 판단한다.
+$version = if ($env:GITHUB_REF_NAME -match '^v') { $env:GITHUB_REF_NAME } else { 'dev-' + (git -C $root rev-parse --short HEAD) }
+Set-Content -Encoding ascii -NoNewline (Join-Path $pkg 'VERSION') $version
 Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
 
-# 5) 압축
+# 5) 압축: 전체(Python 포함)와 업데이트용(프로그램 파일만, UPDATE.bat 이 받는다)
 $out = Join-Path $dist 'L-SATS-windows.zip'
 Compress-Archive -Path $pkg -DestinationPath $out -CompressionLevel Optimal
-'{0:N0} MB' -f ((Get-Item $out).Length / 1MB) | Write-Host
+'full   {0:N0} MB' -f ((Get-Item $out).Length / 1MB) | Write-Host
+
+$upd = Join-Path $dist 'update\L-SATS'
+New-Item -ItemType Directory -Force $upd | Out-Null
+Get-ChildItem $pkg -Force | Where-Object { $_.Name -ne 'python' } | Copy-Item -Recurse -Destination $upd
+$out = Join-Path $dist 'L-SATS-update.zip'
+Compress-Archive -Path $upd -DestinationPath $out -CompressionLevel Optimal
+'update {0:N2} MB' -f ((Get-Item $out).Length / 1MB) | Write-Host

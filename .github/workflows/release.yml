@@ -22,10 +22,26 @@ jobs:
       - name: 패키지 빌드
         shell: pwsh
         run: packaging\build_windows.ps1
-      - name: 압축 풀어서 START.bat 실행 확인
-        shell: pwsh
+      - name: 압축 풀어서 UPDATE 확인
+        # Windows PowerShell 5.1(사용자 PC 기본)로 실행해 본다
+        shell: powershell
         run: |
           Expand-Archive dist\L-SATS-windows.zip C:\check
+          $d = 'C:\check\L-SATS'
+          $want = Get-Content "$d\VERSION" -Raw
+          Set-Content -NoNewline "$d\VERSION" 'v0.0.0'
+          Remove-Item -Recurse -Force "$d\slab"
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$d\tools\update.ps1" -Source "$pwd\dist\L-SATS-update.zip"
+          if ($LASTEXITCODE -ne 0) { throw "update failed: $LASTEXITCODE" }
+          if ((Get-Content "$d\VERSION" -Raw) -ne $want) { throw 'VERSION not updated' }
+          if (-not (Test-Path "$d\slab\core.py")) { throw 'slab not restored' }
+          if (-not (Get-ChildItem "$d\backup")) { throw 'no backup' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$d\tools\update.ps1" -Source "$pwd\dist\L-SATS-update.zip"
+          if ($LASTEXITCODE -ne 0) { throw "second run failed: $LASTEXITCODE" }
+          Remove-Item -Recurse -Force "$d\backup"
+      - name: 압축 푼 폴더에서 START.bat 실행 확인
+        shell: pwsh
+        run: |
           # 시스템 Python이 끼어들지 않도록 PATH에서 뺀다
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Python|hostedtoolcache' }) -join ';'
           $p = Start-Process cmd.exe -WorkingDirectory C:\check\L-SATS -ArgumentList '/c', 'START.bat --server.headless true > run.log 2>&1' -PassThru
@@ -44,10 +60,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: L-SATS-windows
-          path: dist/L-SATS-windows.zip
+          path: |
+            dist/L-SATS-windows.zip
+            dist/L-SATS-update.zip
       - name: Release에 올리기
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist\L-SATS-windows.zip --title "L-SATS ${{ github.ref_name }} (Windows)" --notes "Windows 휴대용 버전. ZIP을 받아 압축을 풀고 START.bat을 더블클릭하세요. Python 설치가 필요 없습니다."
+        run: gh release create "${{ github.ref_name }}" dist\L-SATS-windows.zip dist\L-SATS-update.zip --title "L-SATS ${{ github.ref_name }} (Windows)" --notes "Windows 휴대용 버전. ZIP을 받아 압축을 풀고 START.bat을 더블클릭하세요. Python 설치가 필요 없습니다. 이미 설치했다면 폴더의 UPDATE.bat을 더블클릭하면 L-SATS-update.zip(프로그램 파일만)을 받아 업데이트합니다."

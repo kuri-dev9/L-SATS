@@ -34,4 +34,4 @@ macOS/Linux: `./run.sh`, 또는 `.venv/bin/python`으로 같은 명령을 실행
 - 그림·보고서의 판정 색은 **방 평균 판정**을 따릅니다(통과 초록, 미달 빗금 빨강). 색은 `slab/plot.py`의 `STATUS` 한 곳에서 정합니다.
 - 보고서 영역은 `slab/report_html.py`의 `SECTIONS`/`PRESETS`에 추가합니다.
 - `.bat` 파일은 CRLF 줄바꿈과 ASCII 문자만 씁니다 (`.gitattributes`로 고정되어 있습니다).
-- 프로그램을 모르는 사용자에게는 README 0장의 휴대용 ZIP(`START.bat`)을 안내합니다. 빌드는 `packaging/`과 `.github/workflows/release.yml`(태그 `v*` push)로 합니다.
+- 프로그램을 모르는 사용자에게는 README 0장의 휴대용 ZIP(`START.bat`)을 안내합니다. 빌드는 `packaging/`과 `.github/workflows/release.yml`(태그 `v*` push)로 합니다. 릴리스에는 전체 ZIP과 프로그램 파일만 담은 `L-SATS-update.zip`이 함께 올라가고, 설치된 폴더의 `UPDATE.bat`이 이것을 받아 바꿉니다. `requirements.txt`를 바꾸면 사용자는 전체 ZIP을 다시 받아야 합니다(UPDATE.bat이 알아서 안내). `packaging/update.ps1`은 Windows PowerShell 5.1용이라 ASCII 문자만 씁니다.

@@ -27,6 +27,17 @@ Python 설치 없이 **받고 → 압축 풀고 → 더블클릭**만 하면 됩
 
 처음 열면 가상 데모 데이터로 결과가 보입니다. 실제 분석은 맨 위 「① 파일 올리기」에 도면(DXF) 1개와 스캔 파일(CSV) 2개를 올리면 됩니다.
 
+### 새 버전으로 업데이트 (큰 ZIP을 다시 받지 않아도 됩니다)
+
+1. 프로그램을 쓰고 있다면 **검은 창을 먼저 닫습니다.**
+2. `L-SATS` 폴더 안의 **`UPDATE.bat`을 더블클릭**합니다.
+3. 최신 프로그램 파일(1MB 안팎)만 받아서 바꿔 줍니다. 「Updated: … → …」가 나오면 끝입니다. `START.bat`으로 다시 실행하세요.
+
+- 이미 최신이면 「Already up to date」라고 나오고 아무것도 바꾸지 않습니다.
+- 바꾸기 전 파일은 `backup` 폴더에 남겨 둡니다.
+- 새 버전이 Python 패키지까지 바꿔야 하는 경우에는 작은 업데이트로 안 되므로, 전체 ZIP 받는 페이지를 자동으로 열어 줍니다. 그때만 위 1~4번을 다시 하면 됩니다.
+- `UPDATE.bat`은 v0.1.5부터 들어 있습니다. 그 전 버전을 쓰고 있다면 전체 ZIP을 한 번만 다시 받아 주세요.
+
 > 아래 1장 이후는 Python을 직접 설치해서 실행하거나 프로그램을 고치려는 분을 위한 내용입니다.
 
 ---
@@ -223,7 +234,7 @@ demo_data/             가상 데모 입력 (8F/7F)
 tools/make_demo_data.py 데모 데이터 생성기
 tests/                 pytest (계산 로직 + 웹 화면 스모크 테스트)
 run.bat / run.sh       원클릭 실행 (Windows / macOS·Linux, Python 필요)
-packaging/             Python 포함 Windows 휴대용 ZIP 빌드 (START.bat, build_windows.ps1)
+packaging/             Python 포함 Windows 휴대용 ZIP 빌드 (START.bat, UPDATE.bat, update.ps1, build_windows.ps1)
 test.bat               Windows 테스트 실행
 .streamlit/config.toml 업로드 한도 500MB 등 Streamlit 설정
 .github/workflows/     GitHub Actions: Windows·Ubuntu 테스트 + run.bat 실행 검증

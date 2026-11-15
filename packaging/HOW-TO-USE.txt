@@ -6,6 +6,13 @@ L-SATS - Slab Thickness Analyzer
 3. The browser opens http://localhost:8501 automatically (about 10-30 seconds)
 4. Keep the black window open while using the program. Close it to stop.
 
+[How to update]
+1. Close the black START.bat window if the program is running.
+2. Double-click UPDATE.bat. It downloads only the program files (about 1 MB).
+3. When it says "Updated", double-click START.bat again.
+   Old files are kept in the "backup" folder.
+   If the new version needs new packages, UPDATE.bat opens the full ZIP download page instead.
+
 [Notes]
 - Do not move START.bat out of this folder. The "python" folder must be next to it.
 - Extract to a normal folder such as Desktop or C:\L-SATS (not inside the ZIP, not Program Files).
