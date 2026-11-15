@@ -29,7 +29,8 @@ jobs:
           Expand-Archive dist\L-SATS-windows.zip C:\check
           $d = 'C:\check\L-SATS'
           $want = Get-Content "$d\VERSION" -Raw
-          Set-Content -NoNewline "$d\VERSION" 'v0.0.0'
+          [IO.File]::WriteAllText("$d\VERSION", 'v0.0.0')
+          Write-Host "VERSION now: $([IO.File]::ReadAllText("$d\VERSION"))"
           Remove-Item -Recurse -Force "$d\slab"
           powershell -NoProfile -ExecutionPolicy Bypass -File "$d\tools\update.ps1" -Source "$pwd\dist\L-SATS-update.zip"
           if ($LASTEXITCODE -ne 0) { throw "update failed: $LASTEXITCODE" }
