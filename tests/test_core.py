@@ -50,13 +50,13 @@ def test_thickness_sample(sample, method):
     upper, lower, plan = sample
     r = analyze(upper, lower, plan, Settings(method=method))
     assert r.summary["n_valid"] >= 45
-    assert 127 < r.summary["median_mm"] < 133
+    assert 137 < r.summary["median_mm"] < 143
     assert (r.points["room"] == "(실 외부)").sum() == 0
     valid = r.points[~r.points["excluded"]]
     assert (valid["match_dist_m"] <= 0.2).all()
     # 바닥 위 물체(+0.2m 이상)는 모두 제외되어야 한다
     assert r.points.loc[r.points["upper_floor_error_mm"] > 100, "excluded"].all()
-    # 데모에서 얇게 만든 101호_침실2(평균 121mm)만 미달
+    # 데모에서 얇게 만든 101호_침실2(평균 131mm)만 미달
     rooms = r.rooms.set_index("room")
     assert rooms.loc["101호_침실2", "judgement"] == "미달"
     assert (rooms.drop("101호_침실2")["judgement"] == "적합").all()
@@ -120,7 +120,7 @@ def test_plot_3d(sample):
     # 방 판정 색(통과 7개·미달 1개)과 기준 높이 판이 그려진다
     assert "기준 통과 (7개 방)" in names
     assert "기준 미달 (1개 방)" in names
-    assert "기준 높이 = 125mm" in names
+    assert "기준 높이 = 135mm" in names
     rooms = [t for t in plot_room_map(r).data if t.fill == "toself"]
     assert len(rooms) == len(plan.rooms)
     assert sum(t.fillcolor == "#f6b8b8" for t in rooms) == 1  # 미달 방 하나만 빨갛게

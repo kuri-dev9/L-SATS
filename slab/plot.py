@@ -183,9 +183,10 @@ def histogram(result: AnalysisResult):
             p.set_facecolor(STATUS["미달"]["edge"] if left < limit else STATUS["적합"]["edge"])
     ax.axvline(limit, color="#3b4252", lw=1.2)
     ax.text(limit, ax.get_ylim()[1] * 0.95, f" 기준 {limit:g}mm", va="top", fontsize=9, color="#3b4252")
-    ax.axvline(s.design_mm, color="#8a8f98", lw=1, ls=":")
-    ax.text(s.design_mm, ax.get_ylim()[1] * 0.8, f" 설계 {s.design_mm:g}mm", va="top", fontsize=9,
-            color="#8a8f98")
+    if s.tolerance_mm:
+        ax.axvline(s.design_mm, color="#8a8f98", lw=1, ls=":")
+        ax.text(s.design_mm, ax.get_ylim()[1] * 0.8, f" 설계 {s.design_mm:g}mm", va="top", fontsize=9,
+                color="#8a8f98")
     ax.set_xlabel("두께 (mm)")
     ax.set_ylabel("측정점 수")
     for side in ("top", "right"):

@@ -296,7 +296,7 @@ def assign_rooms(cad_xy: np.ndarray, rooms: list[Room]) -> list[Room | None]:
 @dataclass
 class Settings:
     design_mm: float = 135.0  # 설계 슬래브 두께
-    tolerance_mm: float = 10.0  # 허용 부족량: 두께 >= 설계 - 허용 이면 적합
+    tolerance_mm: float = 0.0  # 허용 부족량: 두께 >= 설계 - 허용 이면 적합 (현장 기준: 135mm 이상만 통과, 0 고정)
     method: str = "nearest"  # nearest: 최근접 대응점 / interpolate: 하부 천장면 보간
     max_match_dist_m: float = 0.2  # 대응점 최대 수평 거리
     max_surface_error_mm: float = 30.0  # 층 기준면 대비 편차가 이보다 크면 제외(물체·돌출물)

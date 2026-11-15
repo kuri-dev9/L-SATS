@@ -110,7 +110,7 @@ def _sec_summary(result, meta):
             f'--off:{circ * (1 - ratio):.1f}"/><text x="50" y="47">{ratio * 100:.0f}%</text>'
             f'<text x="50" y="64" class="ring-sub">통과</text></svg>')
     kpis = [
-        ("평균 두께", f"{sm['mean_mm']:.0f}<small>mm</small>", f"설계 대비 {sm['mean_mm'] - s.design_mm:+.0f}mm"),
+        ("평균 두께", f"{sm['mean_mm']:.0f}<small>mm</small>", f"기준 대비 {sm['mean_mm'] - limit:+.0f}mm"),
         ("기준 통과한 방" if result.plan is not None else "기준 통과한 점",
          f"{n_ok}<small>/{n_judged}</small>" if result.plan is not None else f"{sm['pass_rate'] * 100:.0f}<small>%</small>",
          f"기준 {limit:g}mm 이상"),
@@ -121,8 +121,7 @@ def _sec_summary(result, meta):
                        f'<div class="ks">{c}</div></div>' for a, b, c in kpis)
     return (f'<div class="verdict v-{ "ok" if key == "적합" else "bad"}">{ring}<div>'
             f'<div class="vh">{_e(head)}</div><div class="vd">{_e(desc)}</div>'
-            f'<div class="vc">설계 두께 {s.design_mm:g}mm, 허용 오차 {s.tolerance_mm:g}mm → '
-            f'방 평균이 <b>{limit:g}mm 이상</b>이면 통과</div></div></div>'
+            f'<div class="vc">기준 두께 {limit:g}mm — 방 평균이 <b>{limit:g}mm 이상</b>이면 통과</div></div></div>'
             f'<div class="kpis">{kpi_html}</div>')
 
 
@@ -268,7 +267,7 @@ def build_html(result: AnalysisResult, meta: dict, spec: ReportSpec | None = Non
     d = _dt.date.today()
     today = f"{d.year}년 {d.month:02d}월 {d.day:02d}일"  # Windows 의 strftime 은 한글을 못 쓴다
     facts = [("동", meta.get("동", "") or "-"), ("검사 층", f"{meta.get('상부층', '')} 바닥 / {meta.get('하부층', '')} 천장"),
-             ("설계 두께", f"{s.design_mm:g}mm"), ("작성일", today)]
+             ("기준 두께", f"{s.design_mm - s.tolerance_mm:g}mm 이상"), ("작성일", today)]
     fact_html = "".join(f"<div><span>{a}</span><b>{_e(b)}</b></div>" for a, b in facts)
     return f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

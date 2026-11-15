@@ -145,17 +145,16 @@ with st.container(border=True, key="step1"):
         st.info("파일을 올리기 전이라 **연습용 데모 데이터**(가상)로 보여주고 있어요. "
                 "실제 파일 3개를 올리면 결과가 바로 바뀝니다.", icon=":material/school:")
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4 = st.columns(4, vertical_alignment="bottom")
     meta = {
         "동": m1.text_input("동", "데모동" if use_demo else "", placeholder="예: 101동"),
         "상부층": m2.text_input("위층", "8F" if use_demo else "", placeholder="예: 8F"),
         "하부층": m3.text_input("아래층", "7F" if use_demo else "", placeholder="예: 7F"),
     }
-    design = m4.number_input("설계 두께 (mm)", 0.0, 1000.0, 135.0, 5.0,
-                             help="도면상 슬래브 두께")
-    tol = m5.number_input("허용 오차 (mm)", 0.0, 200.0, 10.0, 1.0,
-                          help="설계보다 이만큼 얇아도 적합으로 봅니다. "
-                               "예: 설계 135, 허용 10 → 125mm 이상이면 적합")
+    # 현장 기준: 설계 두께 135mm, 허용 오차 없음 → 방 평균 135mm 이상만 통과 (화면에서 바꾸지 않는다)
+    design, tol = Settings.design_mm, Settings.tolerance_mm
+    m4.metric("기준 두께 (고정)", f"{design:g} mm 이상", border=True,
+              help="방 안 측정점들의 평균 두께가 이 값 이상이면 통과입니다. 현장 기준으로 고정되어 있어요.")
 
 if use_demo:
     upper_f, lower_f, cad_f = _demo("upper"), _demo("lower"), _demo("cad")
@@ -307,7 +306,7 @@ with results_box:
                 names = ", ".join(f"{r.room}({r.mean_mm:.0f}mm)" for r in bad.head(5).itertuples())
                 if len(bad) > 5:
                     names += f" 외 {len(bad) - 5}개 (아래 표 참고)"
-                st.error(f"설계 {design:g}mm, 기준 {limit:g}mm 이상 → 가장 얇은 방부터: {names}",
+                st.error(f"기준 {limit:g}mm 이상 → 가장 얇은 방부터: {names}",
                          title=f"{len(bad)}개 방이 설계보다 얇아요 (전체 {n_judged}개 중)", icon=":material/error:")
 
             unknown = judged[judged["judgement"] == "판정불가"]
@@ -319,7 +318,7 @@ with results_box:
 
         c = st.columns(3)
         c[0].container(key="kpi0").metric(
-            "평균 두께", f"{sm['mean_mm']:.0f} mm", f"{sm['mean_mm'] - design:+.0f} mm (설계 대비)",
+            "평균 두께", f"{sm['mean_mm']:.0f} mm", f"{sm['mean_mm'] - design:+.0f} mm (기준 대비)",
             border=True, help=f"제외된 점을 뺀 {sm['n_valid']}개 측정점의 평균")
         if result.plan is not None:
             c[1].container(key="kpi1").metric(
