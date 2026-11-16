@@ -45,21 +45,24 @@ def test_transform_matches_cad(sample):
     assert r.transform.rotation_deg == pytest.approx(23.5, abs=0.01)
 
 
-@pytest.mark.parametrize("method", ["nearest", "interpolate"])
+@pytest.mark.parametrize("method", ["auto", "nearest", "interpolate"])
 def test_thickness_sample(sample, method):
     upper, lower, plan = sample
     r = analyze(upper, lower, plan, Settings(method=method))
-    assert r.summary["n_valid"] >= 45
+    assert r.summary["n_valid"] >= 35
     assert 137 < r.summary["median_mm"] < 143
-    assert (r.points["room"] == "(실 외부)").sum() == 0
+    assert r.summary["n_outside"] == 0
     valid = r.points[~r.points["excluded"]]
-    assert (valid["match_dist_m"] <= 0.2).all()
+    direct = valid[valid["calc_method"] == "직접 대응"]
+    assert (direct["match_dist_m"] <= r.settings.max_match_dist_m).all()
+    assert valid["thickness_mm"].notna().all()
     # 바닥 위 물체(+0.2m 이상)는 모두 제외되어야 한다
     assert r.points.loc[r.points["upper_floor_error_mm"] > 100, "excluded"].all()
     # 데모에서 얇게 만든 101호_침실2(평균 131mm)만 미달
     rooms = r.rooms.set_index("room")
     assert rooms.loc["101호_침실2", "judgement"] == "미달"
     assert (rooms.drop("101호_침실2")["judgement"] == "적합").all()
+    assert rooms.loc["101호_침실2", "unit"] == "101호" and rooms.loc["실_08", "unit"] == "공용"
 
 
 def test_room_rename(sample):

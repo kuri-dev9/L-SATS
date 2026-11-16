@@ -4,8 +4,34 @@ maxUploadSize = 500
 [browser]
 gatherUsageStats = false
 
-[theme]
-primaryColor = "#d64545"
-
 [client]
 toolbarMode = "viewer"
+
+# 화면 색: 남색 사이드바 + 밝은 본문. 판정 색(초록/빨강)은 slab/plot.py 의 STATUS 에서 정한다.
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5fb"
+textColor = "#1e293b"
+linkColor = "#2563eb"
+borderColor = "#dde4ee"
+dataframeHeaderBackgroundColor = "#eef3fa"
+greenColor = "#2e9d5b"
+redColor = "#c62f2f"
+blueColor = "#2563eb"
+baseRadius = "0.65rem"
+showSidebarBorder = false
+paddingTop = "2.5rem"
+metricValueFontWeight = 700
+headingFontWeights = [700, 700, 650, 600, 600, 600]
+
+[theme.sidebar]
+backgroundColor = "#0f2a4a"
+secondaryBackgroundColor = "#1b3d66"
+textColor = "#e6edf7"
+borderColor = "#2a4c78"
+primaryColor = "#7fb2ff"
+linkColor = "#9cc3ff"
+codeBackgroundColor = "#1b3d66"
+codeTextColor = "#e6edf7"

@@ -10,3 +10,5 @@ sample_data/
 .agents/
 .claude/
 dist/
+user_settings.json
+work_history/

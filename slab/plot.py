@@ -68,14 +68,23 @@ def plot_plan(result: AnalysisResult, show_values: bool = True, title: str = "")
         ax.text(*r.label_xy, label, fontsize=7, color="#3b4252", ha="center", va="center",
                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7))
 
-    ok = pts[~pts["excluded"]]
-    ex = pts[pts["excluded"]]
+    inside = pts["in_room"] if "in_room" in pts else np.ones(len(pts), bool)
+    ok = pts[~pts["excluded"] & inside]
+    ex = pts[(pts["judgement"] == "제외") & inside]
+    none = pts[(pts["judgement"] == "미산출") & inside]
+    out = pts[~inside]
     span_mm = max(30.0, float(np.nanmax(np.abs(ok["deviation_mm"]))) if len(ok) else 30.0)
     norm = TwoSlopeNorm(vcenter=0.0, vmin=-span_mm, vmax=span_mm)
     sc = ax.scatter(ok["cad_x"], ok["cad_y"], c=ok["deviation_mm"], cmap="RdBu", norm=norm,
                     s=60, edgecolors="#333", linewidths=0.4, zorder=3)
     ax.scatter(ex["cad_x"], ex["cad_y"], marker="x", c="#9aa0a6", s=40, linewidths=1.2,
                zorder=3, label="제외")
+    if len(none):
+        ax.scatter(none["cad_x"], none["cad_y"], marker="o", facecolors="#d9dce1", edgecolors="#8a8f98",
+                   s=40, linewidths=0.8, zorder=3, label="산출 불가")
+    if len(out):
+        ax.scatter(out["cad_x"], out["cad_y"], marker="s", facecolors="none", edgecolors="#b8bec6",
+                   s=30, linewidths=0.8, zorder=3, label="영역외")
     below = ok[ok["judgement"] == "미달"]
     ax.scatter(below["cad_x"], below["cad_y"], facecolors="none", edgecolors="#c0392b",
                s=150, linewidths=1.2, zorder=4, label="미달")
@@ -86,13 +95,15 @@ def plot_plan(result: AnalysisResult, show_values: bool = True, title: str = "")
                         textcoords="offset points", fontsize=6, ha="center", zorder=5)
 
     cb = fig.colorbar(sc, ax=ax, fraction=0.025, pad=0.01)
-    cb.set_label(f"설계({s.design_mm:g}mm) 대비 편차 (mm)")
+    cb.set_label(f"개별 측정점 두께의 설계({s.design_mm:g}mm) 대비 편차 (mm)")
     ax.set_aspect("equal")
     ax.autoscale_view()
     ax.set_xticks([])
     ax.set_yticks([])
     ax.legend(loc="upper right", fontsize=8)
     ax.set_title(title or "슬래브 두께 포인트 위치도", fontsize=12)
+    ax.text(0.0, -0.01, "점 색·숫자는 개별 측정점 두께입니다. 방 통과/미달은 방 평균으로 판정합니다.",
+            transform=ax.transAxes, fontsize=8, color="#4c525c", va="top")
     fig.tight_layout()
     return fig
 
@@ -103,12 +114,12 @@ def room_cells(result: AnalysisResult) -> list[tuple[Room, str, float, str]]:
         return []
     pts = result.points
     name_of = dict(zip(pts["room_id"], pts["room"]))
-    by_name = result.rooms.set_index("room")
+    by_id = result.rooms.set_index("room_id")
     cells = []
     for r in result.plan.rooms:
         name = name_of.get(r.room_id, r.name)
-        if name in by_name.index:
-            row = by_name.loc[name]
+        if r.room_id in by_id.index:
+            row = by_id.loc[r.room_id]
             cells.append((r, name, float(row["mean_mm"]), str(row["judgement"])))
         else:
             cells.append((r, name, float("nan"), "측정없음"))

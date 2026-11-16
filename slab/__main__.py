@@ -1,10 +1,12 @@
 """명령줄 실행: python -m slab 상부층.csv 하부층.csv --cad 도면.dxf -o 결과.xlsx"""
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
-from . import Settings, analyze, load_cad, load_grid
+from . import analyze, load_cad, load_grid
 from .report import build_dxf, build_excel, rooms_table
+from .settings_store import load_settings
 
 
 def main() -> None:
@@ -14,7 +16,8 @@ def main() -> None:
     p.add_argument("--cad", help="통합 CAD DXF (실 경계 + 실명 + 상부층 측정점 라벨)")
     p.add_argument("-o", "--output", default="슬래브두께_결과.xlsx", help="Excel 결과 경로")
     p.add_argument("--dxf-output", help="결과 DXF 경로 (지정 시 저장)")
-    p.add_argument("--method", choices=["nearest", "interpolate"], default="nearest")
+    p.add_argument("--method", choices=["auto", "nearest", "interpolate"],
+                   help="대응 방식 (기본: 설정 페이지에 저장한 값)")
     p.add_argument("--dong", default="", help="동 (예: 101동)")
     p.add_argument("--upper-floor", default="", help="상부층 (예: 8F)")
     p.add_argument("--lower-floor", default="", help="하부층 (예: 7F)")
@@ -22,7 +25,9 @@ def main() -> None:
     # Windows 콘솔(cp949 등)에서 출력할 수 없는 문자가 있어도 중단되지 않게 한다
     sys.stdout.reconfigure(errors="replace")
 
-    settings = Settings(method=a.method)  # 기준 두께 135mm 고정
+    settings = load_settings()  # 설정 페이지에 저장한 값 (기준 두께 135mm 고정)
+    if a.method:
+        settings = replace(settings, method=a.method)
     plan = load_cad(a.cad) if a.cad else None
     result = analyze(load_grid(a.upper), load_grid(a.lower), plan, settings)
     meta = {"동": a.dong, "상부층": a.upper_floor, "하부층": a.lower_floor}

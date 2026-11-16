@@ -1,4 +1,5 @@
 """레이저 스캔 기반 실별 슬래브 두께 자동 산출."""
+from . import history
 from .core import (
     AnalysisResult,
     CadPlan,
@@ -10,4 +11,4 @@ from .core import (
     standardize_grid,
 )
 
-__version__ = "0.1.6"
+__version__ = "0.2.0"

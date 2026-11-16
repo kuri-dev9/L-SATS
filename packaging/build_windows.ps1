@@ -39,6 +39,7 @@ foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
 # 4) 앱 파일
 Copy-Item (Join-Path $root 'app.py') $pkg
 Copy-Item -Recurse (Join-Path $root 'slab') $pkg
+Copy-Item -Recurse (Join-Path $root 'views') $pkg
 Copy-Item -Recurse (Join-Path $root 'demo_data') $pkg
 New-Item -ItemType Directory -Force (Join-Path $pkg '.streamlit') | Out-Null
 Copy-Item (Join-Path $root '.streamlit\config.toml') (Join-Path $pkg '.streamlit')

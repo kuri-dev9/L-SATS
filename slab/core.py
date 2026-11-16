@@ -16,8 +16,7 @@ import numpy as np
 import pandas as pd
 from ezdxf import recover
 from matplotlib.path import Path as MplPath
-from scipy.interpolate import LinearNDInterpolator
-from scipy.spatial import cKDTree
+from scipy.spatial import Delaunay, QhullError, cKDTree
 
 # 입력 파일의 기본 열 이름 (grid_analysis_floor_level_*.csv 형식)
 DEFAULT_COLUMNS = {
@@ -280,14 +279,129 @@ def estimate_transform(plan: CadPlan, grid: pd.DataFrame) -> Transform:
     )
 
 
+
+
+# ---------------------------------------------------------------------------
+# 실 배정
+# ---------------------------------------------------------------------------
+def _edge_distance(xy: np.ndarray, polygon: np.ndarray) -> np.ndarray:
+    """각 점에서 다각형 테두리까지의 최단 거리."""
+    a = polygon
+    b = np.roll(polygon, -1, axis=0)
+    ab = b - a
+    ap = xy[:, None, :] - a[None, :, :]
+    t = np.clip((ap * ab).sum(-1) / np.maximum((ab**2).sum(-1), 1e-12), 0, 1)
+    proj = a[None] + t[..., None] * ab[None]
+    return np.sqrt(((xy[:, None, :] - proj) ** 2).sum(-1)).min(1)
+
+
+@dataclass
+class RoomHit:
+    room: Room | None
+    note: str = ""  # 경계선 위·경계 중첩 같은 검토 메모
+    overlap: bool = False
+
+
+def locate_rooms(cad_xy: np.ndarray, rooms: list[Room], tol: float = 0.0) -> list[RoomHit]:
+    """각 점이 속한 실을 찾는다.
+
+    - 한 실 안에만 있으면 그 실.
+    - 여러 실 안에 있으면(경계 중첩) 면적이 가장 작은 실에 넣고 중첩으로 표시한다.
+    - 어느 실 안에도 없지만 테두리에서 tol 이내면 '경계선 위'로 보고 가장 작은 실에 넣는다.
+    - 그 밖은 영역외(None).
+    """
+    cad_xy = np.asarray(cad_xy, float).reshape(-1, 2)
+    if not rooms or not len(cad_xy):
+        return [RoomHit(None) for _ in range(len(cad_xy))]
+    inside = np.column_stack([MplPath(r.polygon).contains_points(cad_xy) for r in rooms])
+    if tol > 0:
+        near = np.column_stack([_edge_distance(cad_xy, r.polygon) <= tol for r in rooms])
+    else:
+        near = np.zeros_like(inside)
+    areas = np.array([r.area for r in rooms])
+    strict = inside & ~near  # 테두리 근처는 '경계선 위'로 따로 본다 (벽을 같이 쓰는 두 방은 중첩이 아니다)
+    out = []
+    for i in range(len(cad_xy)):
+        ins = np.flatnonzero(strict[i])
+        if len(ins) == 1:
+            out.append(RoomHit(rooms[ins[0]]))
+        elif len(ins) > 1:
+            pick = ins[np.argmin(areas[ins])]
+            names = ", ".join(rooms[j].name for j in ins)
+            out.append(RoomHit(rooms[pick], f"방 경계 중첩({names})", True))
+        else:
+            nb = np.flatnonzero(near[i] | inside[i])
+            if len(nb):
+                pick = nb[np.argmin(areas[nb])]
+                out.append(RoomHit(rooms[pick], "방 경계선 위"))
+            else:
+                out.append(RoomHit(None))
+    return out
+
+
 def assign_rooms(cad_xy: np.ndarray, rooms: list[Room]) -> list[Room | None]:
     """각 점이 속한 실 (여러 실에 걸리면 면적이 가장 작은 실)."""
-    out: list[Room | None] = [None] * len(cad_xy)
-    for room in sorted(rooms, key=lambda r: r.area, reverse=True):
-        inside = MplPath(room.polygon).contains_points(cad_xy)
-        for i in np.flatnonzero(inside):
-            out[i] = room
-    return out
+    return [h.room for h in locate_rooms(cad_xy, rooms)]
+
+
+def unit_of(name: str, pattern: str, fallback: str) -> str:
+    """실명에서 세대 ID를 뽑는다 (예: '101호_거실' → '101호'). 맞지 않으면 fallback."""
+    if pattern:
+        try:
+            m = re.search(pattern, name)
+        except re.error:
+            m = None
+        if m:
+            return (m.group(1) if m.groups() else m.group(0)).strip() or fallback
+    return fallback
+
+
+# ---------------------------------------------------------------------------
+# 단위
+# ---------------------------------------------------------------------------
+UNIT_FACTOR = {"m": 1.0, "mm": 0.001}
+
+
+def detect_units(grid: pd.DataFrame) -> dict:
+    """좌표(XY)와 높이(Z)의 단위를 추정한다.
+
+    XY: 이웃한 측정점 간격이 20 넘으면 mm (m 로 20m 간격 격자는 없다고 본다).
+    Z: 같은 점의 천장-바닥 높이 차(층고)가 100 넘으면 mm.
+    바닥·천장 열의 크기가 수백 배 다르면 한 파일 안에서 단위가 섞인 것으로 본다.
+    """
+    info = {"xy": "m", "z": "m", "mixed": ""}
+    xy = grid[["x", "y"]].dropna().to_numpy(float)
+    if len(xy) > 1:
+        d, _ = cKDTree(xy).query(xy, k=2)
+        if np.median(d[:, 1]) > 20:
+            info["xy"] = "mm"
+    both = grid[["floor_z", "ceiling_z"]].dropna()
+    if len(both):
+        f, c = both["floor_z"].abs().median(), both["ceiling_z"].abs().median()
+        lo, hi = min(f, c), max(f, c)
+        if lo > 1 and hi / lo > 300:
+            info["mixed"] = "바닥 높이와 천장 높이 열의 단위가 서로 다른 것 같습니다"
+        elif (both["ceiling_z"] - both["floor_z"]).abs().median() > 100:
+            info["z"] = "mm"
+    return info
+
+
+def to_meters(grid: pd.DataFrame, xy_unit: str = "auto", z_unit: str = "auto") -> tuple[pd.DataFrame, dict]:
+    """표준 그리드의 좌표·높이를 m 로 바꾼다. (변환된 표, 사용한 단위 정보)."""
+    found = detect_units(grid)
+    if found["mixed"] and z_unit == "auto":
+        raise ValueError(found["mixed"] + ". 설정 페이지에서 높이 단위를 직접 지정하거나 파일을 확인해 주세요.")
+    used = {"xy": found["xy"] if xy_unit == "auto" else xy_unit,
+            "z": found["z"] if z_unit == "auto" else z_unit,
+            "auto_xy": xy_unit == "auto", "auto_z": z_unit == "auto"}
+    out = grid.copy()
+    if used["xy"] != "m":
+        out[["x", "y"]] = out[["x", "y"]] * UNIT_FACTOR[used["xy"]]
+    if used["z"] != "m":
+        k = UNIT_FACTOR[used["z"]]
+        for col in ("floor_z", "ceiling_z", "floor_error", "ceiling_error"):
+            out[col] = out[col] * k
+    return out, used
 
 
 # ---------------------------------------------------------------------------
@@ -295,12 +409,43 @@ def assign_rooms(cad_xy: np.ndarray, rooms: list[Room]) -> list[Room | None]:
 # ---------------------------------------------------------------------------
 @dataclass
 class Settings:
+    """계산·출력 설정. 판정 기준(design_mm, tolerance_mm)은 현장 기준으로 고정이고 화면에서 바꾸지 않는다.
+
+    나머지 값은 설정 페이지(user_settings.json)에서 바꿀 수 있다. 의미는 slab/settings_store.py 참고.
+    """
+
     design_mm: float = 135.0  # 설계 슬래브 두께
     tolerance_mm: float = 0.0  # 허용 부족량: 두께 >= 설계 - 허용 이면 적합 (현장 기준: 135mm 이상만 통과, 0 고정)
-    method: str = "nearest"  # nearest: 최근접 대응점 / interpolate: 하부 천장면 보간
-    max_match_dist_m: float = 0.2  # 대응점 최대 수평 거리
+    method: str = "auto"  # auto: 직접 대응 우선→실패 시 TIN / nearest: 직접 대응만 / interpolate: TIN만
+    max_match_dist_m: float = 1.2  # 상부 격자 교차점 → 가장 가까운 하부 격자 교차점 최대 수평 거리 (담당자 확인값)
     max_surface_error_mm: float = 30.0  # 층 기준면 대비 편차가 이보다 크면 제외(물체·돌출물)
-    outlier_mad_k: float = 5.0  # 두께 통계 이상치 기준 (0 = 사용 안 함)
+    outlier_mad_k: float = 5.0  # MAD 이상치 배수 (0 = 사용 안 함)
+    # 대응
+    allow_reuse: bool = True  # 하부점 하나를 여러 상부점에 써도 되는지 (False: 가까운 쌍부터 1:1 배정)
+    tin_max_edge_m: float = 0.0  # TIN 삼각형 가장 긴 변 한도 (0 = 제한 없음)
+    tin_cross_room: str = "warn"  # TIN·대응점이 다른 방 점을 쓸 때: warn(메모만) / exclude(제외)
+    # 단위
+    xy_unit: str = "auto"  # auto / m / mm
+    z_unit: str = "auto"  # auto / m / mm
+    # 이상치
+    outlier_method: str = "mad"  # none / mad / iqr
+    outlier_iqr_k: float = 1.5  # IQR 배수
+    outlier_side: str = "both"  # both: 두껍고 얇은 쪽 모두 / thick: 두꺼운 쪽만 (얇은 점은 지우지 않음)
+    min_thickness_mm: float = 0.0  # 이보다 얇으면 제외 (0 = 사용 안 함)
+    max_thickness_mm: float = 0.0  # 이보다 두꺼우면 제외 (0 = 사용 안 함)
+    # 실
+    unit_pattern: str = r"^(\d+호|코아\d*)"  # 실명에서 세대 ID를 뽑는 정규식 (첫 괄호)
+    unit_fallback: str = "공용"  # 세대 ID가 없는 영역(코아 등)의 이름
+    overlap_policy: str = "smallest"  # 경계 중첩: smallest(작은 방에 넣고 메모) / exclude(제외)
+    boundary_tol_mm: float = 1.0  # 경계선 위로 볼 거리 (측량 좌표 기준)
+    # 출력
+    excel_layout: str = "simple"  # simple: 포인트 결과+위치도 2시트 / full: 요약·방별 등 전체
+    excel_map_scale_pct: int = 40  # 엑셀 위치도 그림 크기(%) - CAD 축척과 무관
+    excel_freeze_panes: bool = False  # 엑셀 첫 행 틀고정
+    excel_show_pass_rate: bool = False  # 엑셀에 적합률 표시 (앱 화면에는 항상 표시)
+    excel_tin_detail: bool = True  # 포인트 결과에 TIN 세 점·가중치 열 펼치기
+    report_draft: bool = True  # 보고서·엑셀에 '검토 전 초안' 표시
+    report_draft_text: str = "검토 전 참고용 초안 — 실측 기준점 확인 전에는 판정 근거로 쓰지 마세요"
 
 
 @dataclass
@@ -313,95 +458,310 @@ class AnalysisResult:
     transform: Transform | None
 
 
-def compute_thickness(upper: pd.DataFrame, lower: pd.DataFrame, s: Settings) -> pd.DataFrame:
-    """상부층 각 점에 하부층 천장 Z를 대응시키고 두께와 제외 사유를 계산한다."""
+STATUS_OK, STATUS_EXCLUDED, STATUS_NONE = "산출", "제외", "미산출"
+METHOD_DIRECT, METHOD_TIN = "직접 대응", "TIN 보간"
+EPS_M = 1e-9  # 허용 거리 경계(예: 정확히 0.2m)가 부동소수 오차로 빠지지 않게
+TIN_COLS = [f"tin_{k}{i}" for i in (1, 2, 3) for k in ("id", "x", "y", "z", "w")]
+
+
+def _greedy_pairs(up_xy: np.ndarray, lo_xy: np.ndarray, max_d: float) -> tuple[np.ndarray, np.ndarray]:
+    """가까운 쌍부터 1:1로 배정한다 (전역 최적은 아니지만 결과가 항상 같다)."""
+    idx = np.full(len(up_xy), -1)
+    dist = np.full(len(up_xy), np.inf)
+    pairs = cKDTree(up_xy).sparse_distance_matrix(cKDTree(lo_xy), max_d, output_type="ndarray")
+    if len(pairs):
+        pairs = np.sort(pairs, order=["v", "i", "j"])
+        used_u, used_l = set(), set()
+        for i, j, v in zip(pairs["i"], pairs["j"], pairs["v"]):
+            if i in used_u or j in used_l:
+                continue
+            used_u.add(i)
+            used_l.add(j)
+            idx[i], dist[i] = j, v
+    return idx, dist
+
+
+def _tin(clean: pd.DataFrame, q: np.ndarray, max_edge: float):
+    """하부 정상 천장점으로 만든 삼각망(TIN)에서 각 질의점의 천장 Z를 구한다. 외삽하지 않는다.
+
+    반환: (z, 세 꼭짓점 행 번호 (n,3), 가중치 (n,3), 실패 사유 목록)
+    """
+    n = len(q)
+    z = np.full(n, np.nan)
+    verts = np.full((n, 3), -1)
+    w = np.full((n, 3), np.nan)
+    why = [""] * n
+    if len(clean) < 3:
+        return z, verts, w, ["보간용 하부점 3개 미만"] * n
+    xy = clean[["x", "y"]].to_numpy(float)
+    try:
+        tri = Delaunay(xy)
+    except QhullError:
+        return z, verts, w, ["하부점이 한 줄로 놓여 삼각형을 만들 수 없음"] * n
+    simp = tri.find_simplex(q)
+    cz = clean["ceiling_z"].to_numpy(float)
+    for i in range(n):
+        if simp[i] < 0:
+            why[i] = "TIN 삼각형 밖(외삽 안 함)"
+            continue
+        v = tri.simplices[simp[i]]
+        p = xy[v]
+        edges = np.linalg.norm(p - np.roll(p, -1, axis=0), axis=1)
+        longest = edges.max()
+        (ax, ay), (bx, by) = p[1] - p[0], p[2] - p[0]
+        area = 0.5 * abs(ax * by - ay * bx)
+        if area < 1e-3 * longest**2:
+            why[i] = "TIN 퇴화 삼각형(세 점이 거의 한 줄)"
+            continue
+        if max_edge > 0 and longest > max_edge:
+            why[i] = f"TIN 삼각형이 너무 큼(변 {longest:.2f}m > {max_edge:g}m)"
+            continue
+        T = tri.transform[simp[i]]
+        b = T[:2] @ (q[i] - T[2])
+        wi = np.array([b[0], b[1], 1 - b.sum()])
+        verts[i], w[i] = v, wi
+        z[i] = float(wi @ cz[v])
+    return z, verts, w, why
+
+
+def match_points(upper: pd.DataFrame, lower: pd.DataFrame, s: Settings) -> pd.DataFrame:
+    """상부층 각 점에 하부층 천장 Z를 대응시킨다 (판정 전 단계).
+
+    auto: 직접 대응(허용 거리 안·정상 천장점)을 먼저 쓰고, 실패하면 TIN 보간, 그래도 안 되면 미산출.
+    reasons 열(목록)에 제외 사유, notes 열(목록)에 검토 메모를 담는다.
+    """
     lower_ok = lower[lower["valid_ceiling"]].reset_index(drop=True)
     if lower_ok.empty:
         raise ValueError("하부층에 유효한 천장 측정값이 없습니다.")
-    up_xy = upper[["x", "y"]].to_numpy()
-    dist, idx = cKDTree(lower_ok[["x", "y"]].to_numpy()).query(up_xy)
-    near = lower_ok.iloc[idx].reset_index(drop=True)
+    n = len(upper)
+    up_xy = upper[["x", "y"]].to_numpy(float)
+    lo_xy = lower_ok[["x", "y"]].to_numpy(float)
+    thr = s.max_surface_error_mm / 1000
+    lo_err = lower_ok["ceiling_error"].to_numpy(float)
+    lo_clean = np.abs(lo_err) <= thr
 
-    ceiling = near["ceiling_z"].to_numpy(dtype=float)
-    no_surface = np.zeros(len(upper), dtype=bool)
-    if s.method == "interpolate":
-        # 이상 천장점(설비·돌출물)은 빼고 나머지 점으로 천장면을 만들어 보간한다
-        clean = lower_ok[lower_ok["ceiling_error"].abs() <= s.max_surface_error_mm / 1000]
-        if len(clean) >= 3:
-            clean_xy = clean[["x", "y"]].to_numpy()
-            clean_z = clean["ceiling_z"].to_numpy()
-            z = LinearNDInterpolator(clean_xy, clean_z)(up_xy)
-            # 보간면(볼록 껍질) 바로 밖의 점은 가까운 정상 천장점 값을 쓴다
-            cd, ci = cKDTree(clean_xy).query(up_xy)
-            fallback = np.isnan(z) & (cd <= s.max_match_dist_m)
-            z[fallback] = clean_z[ci[fallback]]
-            no_surface = np.isnan(z)
-            ceiling = z
+    near_d, _ = cKDTree(lo_xy).query(up_xy)
+    if s.allow_reuse:
+        d_idx = cKDTree(lo_xy).query(up_xy)[1]
+        d_dist = near_d.copy()
+        d_idx = np.where(d_dist <= s.max_match_dist_m + EPS_M, d_idx, -1)
+    else:
+        d_idx, d_dist = _greedy_pairs(up_xy, lo_xy, s.max_match_dist_m + EPS_M)
+    has_direct = d_idx >= 0
+
+    reasons: list[list[str]] = [[] for _ in range(n)]
+    notes: list[list[str]] = [[] for _ in range(n)]
+    method = np.array([""] * n, dtype=object)
+    ceiling = np.full(n, np.nan)
+    ceil_err = np.full(n, np.nan)
+    lower_id = np.array([""] * n, dtype=object)
+    lower_x = np.full(n, np.nan)
+    lower_y = np.full(n, np.nan)
+    dist = np.where(has_direct, d_dist, np.nan)
+    tin = {c: np.full(n, np.nan) if not c.startswith("tin_id") else np.array([""] * n, dtype=object)
+           for c in TIN_COLS}
+
+    def use_direct(i):
+        j = d_idx[i]
+        method[i] = METHOD_DIRECT
+        ceiling[i] = lower_ok.at[j, "ceiling_z"]
+        ceil_err[i] = lo_err[j] * 1000
+        lower_id[i] = lower_ok.at[j, "point_id"]
+        lower_x[i], lower_y[i] = lo_xy[j]
+
+    if s.method == "nearest":
+        for i in np.flatnonzero(has_direct):
+            use_direct(i)
+        tin_need = np.zeros(n, bool)
+    elif s.method == "interpolate":
+        tin_need = np.ones(n, bool)
+    else:  # auto
+        good = has_direct & lo_clean[np.maximum(d_idx, 0)]
+        for i in np.flatnonzero(good):
+            use_direct(i)
+        tin_need = ~good
+        for i in np.flatnonzero(has_direct & ~good):
+            notes[i].append(f"가장 가까운 하부점({lower_ok.at[d_idx[i], 'point_id']})이 기준면을 벗어나 TIN 시도")
+
+    def _no_match_reason(i, tin_why=""):
+        if s.method == "interpolate":
+            return tin_why
+        parts = ["아래층에 같은 위치 측정 없음"]
+        if not s.allow_reuse and near_d[i] <= s.max_match_dist_m + EPS_M:
+            parts.append("가까운 하부점이 다른 점에 먼저 배정됨(1:1)")
+        if tin_why:
+            parts.append(tin_why)
+        return " · ".join(parts)
+
+    if tin_need.any():
+        clean = lower_ok[lo_clean]
+        rounded = clean[["x", "y"]].round(4)
+        dup = rounded.duplicated()
+        if dup.any():
+            clean = clean[~dup]
+        clean = clean.reset_index(drop=True)
+        qi = np.flatnonzero(tin_need)
+        z, verts, w, why = _tin(clean, up_xy[qi], s.tin_max_edge_m)
+        cxy = clean[["x", "y"]].to_numpy(float)
+        cerr = clean["ceiling_error"].to_numpy(float)
+        for k, i in enumerate(qi):
+            if np.isfinite(z[k]):
+                v = verts[k]
+                method[i] = METHOD_TIN
+                ceiling[i] = z[k]
+                ceil_err[i] = float(w[k] @ cerr[v]) * 1000
+                lower_id[i] = "/".join(clean["point_id"].iloc[v])
+                dist[i] = float(np.linalg.norm(cxy[v] - up_xy[i], axis=1).min())
+                for m in range(3):
+                    tin[f"tin_id{m + 1}"][i] = clean.at[v[m], "point_id"]
+                    tin[f"tin_x{m + 1}"][i], tin[f"tin_y{m + 1}"][i] = cxy[v[m]]
+                    tin[f"tin_z{m + 1}"][i] = clean.at[v[m], "ceiling_z"]
+                    tin[f"tin_w{m + 1}"][i] = w[k][m]
+            elif has_direct[i] and s.method == "auto":
+                # 직접 대응 점은 있으나 이상 천장점이고 TIN 도 안 되면, 그 값으로 계산하고 이상값으로 제외
+                use_direct(i)
+                notes[i].append(why[k])
+            else:
+                reasons[i].append(_no_match_reason(i, why[k]))
+    elif s.method == "nearest":
+        for i in np.flatnonzero(~has_direct):
+            reasons[i].append(_no_match_reason(i))
 
     res = pd.DataFrame(
         {
             "point_id": upper["point_id"].to_numpy(),
-            "x": upper["x"].to_numpy(),
-            "y": upper["y"].to_numpy(),
-            "upper_floor_z": upper["floor_z"].to_numpy(),
-            "lower_point_id": near["point_id"].to_numpy(),
+            "x": up_xy[:, 0],
+            "y": up_xy[:, 1],
+            "upper_floor_z": upper["floor_z"].to_numpy(float),
+            "lower_point_id": lower_id,
             "lower_ceiling_z": ceiling,
+            "calc_method": method,
             "match_dist_m": dist,
-            "upper_floor_error_mm": upper["floor_error"].to_numpy() * 1000,
-            "lower_ceiling_error_mm": near["ceiling_error"].to_numpy() * 1000,
+            "nearest_dist_m": near_d,
+            "lower_x": lower_x,
+            "lower_y": lower_y,
+            "upper_floor_error_mm": upper["floor_error"].to_numpy(float) * 1000,
+            "lower_ceiling_error_mm": ceil_err,
+            **tin,
         }
     )
-    res["thickness_mm"] = (res["upper_floor_z"] - res["lower_ceiling_z"]) * 1000
+    # 부동소수 잡음(예: 134.99999999)이 135mm 판정을 뒤집지 않도록 1nm 단위로 반올림
+    res["thickness_mm"] = ((res["upper_floor_z"] - res["lower_ceiling_z"]) * 1000).round(6)
 
-    reasons: list[list[str]] = [[] for _ in range(len(res))]
+    no_floor = ~upper["valid_floor"].to_numpy()
+    for i in np.flatnonzero(no_floor):
+        reasons[i].insert(0, "위층 바닥 측정 없음")
+    res.loc[no_floor, "thickness_mm"] = np.nan
+    res["no_value"] = res["thickness_mm"].isna() | np.array([bool(r) for r in reasons])
+    res.loc[res["no_value"], "thickness_mm"] = np.nan
+
+    # 같은 좌표에 상부점이 여러 개
+    dup_up = pd.DataFrame(up_xy).round(4).duplicated(keep=False).to_numpy()
+    for i in np.flatnonzero(dup_up):
+        notes[i].append("같은 좌표의 위층 점이 여러 개")
+
+    flags = [[] for _ in range(n)]
+
+    def flag(mask, text):
+        for i in np.flatnonzero(np.asarray(mask) & ~res["no_value"].to_numpy()):
+            flags[i].append(text)
+
+    t = s.max_surface_error_mm
+    flag(res["upper_floor_error_mm"] > t, "위층 바닥이 높게 측정(바닥 위 물건 등)")
+    flag(res["upper_floor_error_mm"] < -t, "위층 바닥이 낮게 측정(단차·개구부 등)")
+    direct = (res["calc_method"] == METHOD_DIRECT).to_numpy()
+    flag(direct & (res["lower_ceiling_error_mm"] < -t), "아래층 천장이 낮게 측정(배관·설비 등)")
+    flag(direct & (res["lower_ceiling_error_mm"] > t), "아래층 천장이 높게 측정(우물천장·개구부 등)")
+
+    res["reasons"] = [r + f for r, f in zip(reasons, flags)]
+    res["notes"] = notes
+    return res
+
+
+def _outlier_mask(t: pd.Series, s: Settings) -> pd.Series:
+    """유효 두께 중 통계 이상치. 얇은 쪽을 지우지 않는 설정이면 두꺼운 쪽만."""
+    out = pd.Series(False, index=t.index)
+    if len(t) < 5 or s.outlier_method == "none":
+        return out
+    if s.outlier_method == "iqr":
+        if s.outlier_iqr_k <= 0:
+            return out
+        q1, q3 = t.quantile(0.25), t.quantile(0.75)
+        iqr = q3 - q1
+        if iqr <= 0:
+            return out
+        hi, lo = t > q3 + s.outlier_iqr_k * iqr, t < q1 - s.outlier_iqr_k * iqr
+    else:
+        if s.outlier_mad_k <= 0:
+            return out
+        med = t.median()
+        mad = 1.4826 * (t - med).abs().median()
+        if mad <= 0:
+            return out
+        hi = t - med > s.outlier_mad_k * mad
+        lo = med - t > s.outlier_mad_k * mad
+    return hi | lo if s.outlier_side == "both" else hi
+
+
+def finalize_points(res: pd.DataFrame, s: Settings) -> pd.DataFrame:
+    """이상치·범위 제외를 더하고 상태(산출/제외/미산출)와 판정을 정한다."""
+    res = res.copy()
+    reasons = [list(r) for r in res["reasons"]]
+    t = res["thickness_mm"]
 
     def flag(mask, text):
         for i in np.flatnonzero(np.asarray(mask)):
             reasons[i].append(text)
 
-    thr = s.max_surface_error_mm
-    flag(~upper["valid_floor"].to_numpy(), "위층 바닥 측정 없음")
-    flag((res["match_dist_m"] > s.max_match_dist_m) | no_surface, "아래층에 같은 위치 측정 없음")
-    # 기준면보다 높은지 낮은지에 따라 짐작되는 원인이 다르다
-    flag(res["upper_floor_error_mm"] > thr, "위층 바닥이 높게 측정(바닥 위 물건 등)")
-    flag(res["upper_floor_error_mm"] < -thr, "위층 바닥이 낮게 측정(단차·개구부 등)")
-    if s.method != "interpolate":
-        flag(res["lower_ceiling_error_mm"] < -thr, "아래층 천장이 낮게 측정(배관·설비 등)")
-        flag(res["lower_ceiling_error_mm"] > thr, "아래층 천장이 높게 측정(우물천장·개구부 등)")
+    if s.min_thickness_mm > 0:
+        flag(t < s.min_thickness_mm, f"두께가 하한({s.min_thickness_mm:g}mm)보다 얇음")
+    if s.max_thickness_mm > 0:
+        flag(t > s.max_thickness_mm, f"두께가 상한({s.max_thickness_mm:g}mm)보다 두꺼움")
+    ok = np.array([not r for r in reasons]) & t.notna().to_numpy()
+    if "in_room" in res:
+        ok &= res["in_room"].to_numpy()  # 영역외 점은 이상치 통계에 넣지 않는다
+    mask = _outlier_mask(t[ok], s).reindex(res.index, fill_value=False)
+    flag(mask, "두께가 다른 점들과 크게 다름")
 
-    if s.outlier_mad_k > 0:
-        ok = np.array([not r for r in reasons])
-        t = res.loc[ok, "thickness_mm"]
-        if len(t) >= 5:
-            med = t.median()
-            mad = 1.4826 * (t - med).abs().median()
-            if mad > 0:
-                flag(ok & ((res["thickness_mm"] - med).abs() > s.outlier_mad_k * mad), "두께가 다른 점들과 크게 다름")
-
-    res["excluded"] = [bool(r) for r in reasons]
+    res["status"] = np.where(res["no_value"], STATUS_NONE,
+                             np.where([bool(r) for r in reasons], STATUS_EXCLUDED, STATUS_OK))
+    res["excluded"] = res["status"] != STATUS_OK
     res["exclude_reason"] = [", ".join(r) for r in reasons]
+    res["review_note"] = [", ".join(dict.fromkeys(n)) for n in res["notes"]]
     res["deviation_mm"] = res["thickness_mm"] - s.design_mm
     limit = s.design_mm - s.tolerance_mm
     res["judgement"] = np.where(
-        res["excluded"], "제외", np.where(res["thickness_mm"] >= limit, "적합", "미달")
-    )
-    return res
+        res["status"] == STATUS_NONE, STATUS_NONE,
+        np.where(res["status"] == STATUS_EXCLUDED, "제외",
+                 np.where(res["thickness_mm"] >= limit, "적합", "미달")))
+    return res.drop(columns=["reasons", "notes"])
+
+
+def compute_thickness(upper: pd.DataFrame, lower: pd.DataFrame, s: Settings) -> pd.DataFrame:
+    """상부층 각 점의 두께와 상태를 계산한다 (도면 없이)."""
+    return finalize_points(match_points(upper, lower, s), s)
 
 
 def summarize_rooms(points: pd.DataFrame, s: Settings) -> pd.DataFrame:
+    """고유 실 ID 별 통계. 이름이 같은 다른 실은 합치지 않는다. 영역외 점은 넣지 않는다."""
     rows = []
-    for room, g in points.groupby("room", sort=False):
+    pts = points[points["in_room"]] if "in_room" in points else points
+    for rid, g in pts.groupby("room_id", sort=False):
         v = g.loc[~g["excluded"], "thickness_mm"]
-        mean = v.mean() if len(v) else np.nan
+        mean = round(float(v.mean()), 6) if len(v) else np.nan
         if not len(v):
             judgement = "판정불가"
         else:
             judgement = "적합" if mean >= s.design_mm - s.tolerance_mm else "미달"
         rows.append(
             {
-                "room": room,
+                "room_id": rid,
+                "unit": g["unit"].iloc[0] if "unit" in g else "",
+                "room": g["room"].iloc[0],
                 "n_points": len(g),
                 "n_valid": len(v),
+                "n_excluded": int((g["status"] == STATUS_EXCLUDED).sum()),
+                "n_no_value": int((g["status"] == STATUS_NONE).sum()),
                 "mean_mm": mean,
                 "min_mm": v.min() if len(v) else np.nan,
                 "max_mm": v.max() if len(v) else np.nan,
@@ -412,7 +772,9 @@ def summarize_rooms(points: pd.DataFrame, s: Settings) -> pd.DataFrame:
                 "judgement": judgement,
             }
         )
-    return pd.DataFrame(rows)
+    cols = ["room_id", "unit", "room", "n_points", "n_valid", "n_excluded", "n_no_value", "mean_mm", "min_mm",
+            "max_mm", "std_mm", "design_mm", "mean_dev_mm", "n_below", "judgement"]
+    return pd.DataFrame(rows, columns=cols)
 
 
 def analyze(
@@ -422,37 +784,83 @@ def analyze(
     settings: Settings | None = None,
     room_names: dict[str, str] | None = None,
 ) -> AnalysisResult:
-    """전체 산출: 대응점 매칭 → 두께 → 이상값 제외 → 실 배정 → 실별 통계."""
+    """전체 산출: 단위 확인 → 대응(직접→TIN) → 실 배정 → 제외·판정 → 실별 통계."""
     s = settings or Settings()
-    pts = compute_thickness(upper, lower, s)
+    upper, u_units = to_meters(upper, s.xy_unit, s.z_unit)
+    lower, l_units = to_meters(lower, s.xy_unit, s.z_unit)
+    warnings = []
+    if (u_units["xy"], u_units["z"]) != (l_units["xy"], l_units["z"]):
+        warnings.append(f"위층(XY {u_units['xy']}, Z {u_units['z']})과 아래층(XY {l_units['xy']}, "
+                        f"Z {l_units['z']}) 파일의 단위가 다릅니다. 모두 m 로 바꿔 계산했습니다.")
+    pts = match_points(upper, lower, s)
 
     transform = None
     survey_xy = pts[["x", "y"]].to_numpy()
     if plan is not None:
         transform = estimate_transform(plan, upper)
         cad_xy = transform.to_cad(survey_xy)
+        tol = s.boundary_tol_mm / 1000 / transform.scale
         names = room_names or {}
-        assigned = assign_rooms(cad_xy, plan.rooms)
-        pts["room_id"] = [r.room_id if r else "" for r in assigned]
-        pts["room"] = [names.get(r.room_id, r.name) if r else OUTSIDE_ROOM for r in assigned]
+        hits = locate_rooms(cad_xy, plan.rooms, tol)
+        pts["room_id"] = [h.room.room_id if h.room else "" for h in hits]
+        pts["room"] = [names.get(h.room.room_id, h.room.name) if h.room else OUTSIDE_ROOM for h in hits]
+        pts["in_room"] = [h.room is not None for h in hits]
+        reasons, notes = pts["reasons"].tolist(), pts["notes"].tolist()
+        for i, h in enumerate(hits):
+            if h.note:
+                notes[i] = notes[i] + [h.note]
+            if h.overlap and s.overlap_policy == "exclude" and not pts.at[i, "no_value"]:
+                reasons[i] = reasons[i] + ["방 경계 중첩"]
+
+        # 대응점·TIN 꼭짓점이 다른 방에 있으면 경계(벽)를 넘었을 수 있다
+        by_id = {r.room_id: r for r in plan.rooms}
+        for i in range(len(pts)):
+            rid = pts.at[i, "room_id"]
+            if not rid:
+                continue
+            if pts.at[i, "calc_method"] == METHOD_TIN:
+                vx = np.array([[pts.at[i, f"tin_x{k}"], pts.at[i, f"tin_y{k}"]] for k in (1, 2, 3)])
+            elif pts.at[i, "calc_method"] == METHOD_DIRECT:
+                vx = np.array([[pts.at[i, "lower_x"], pts.at[i, "lower_y"]]])
+            else:
+                continue
+            vin = MplPath(by_id[rid].polygon).contains_points(transform.to_cad(vx), radius=0)
+            near = _edge_distance(transform.to_cad(vx), by_id[rid].polygon) <= tol
+            if not (vin | near).all():
+                text = "사용한 하부점이 다른 방에 있음(경계 넘음 가능)"
+                notes[i] = notes[i] + [text]
+                if s.tin_cross_room == "exclude" and not pts.at[i, "no_value"]:
+                    reasons[i] = reasons[i] + [text]
+        pts["reasons"], pts["notes"] = reasons, notes
     else:
         cad_xy = survey_xy
-        pts["room_id"] = ""
+        pts["room_id"] = "ALL"
         pts["room"] = NO_CAD
+        pts["in_room"] = True
+    pts["unit"] = [unit_of(r, s.unit_pattern, s.unit_fallback) if inr else ""
+                   for r, inr in zip(pts["room"], pts["in_room"])]
     pts["cad_x"], pts["cad_y"] = cad_xy[:, 0], cad_xy[:, 1]
+    pts = finalize_points(pts, s)
 
     rooms = summarize_rooms(pts, s)
-    valid = pts.loc[~pts["excluded"], "thickness_mm"]
+    inside = pts[pts["in_room"]]
+    valid = inside.loc[~inside["excluded"], "thickness_mm"]
     summary = {
         "n_points": len(pts),
         "n_valid": len(valid),
-        "n_excluded": int(pts["excluded"].sum()),
-        "n_below": int((pts["judgement"] == "미달").sum()),
+        "n_excluded": int((inside["status"] == STATUS_EXCLUDED).sum()),
+        "n_no_value": int((inside["status"] == STATUS_NONE).sum()),
+        "n_outside": int((~pts["in_room"]).sum()),
+        "n_direct": int((inside.loc[~inside["excluded"], "calc_method"] == METHOD_DIRECT).sum()),
+        "n_tin": int((inside.loc[~inside["excluded"], "calc_method"] == METHOD_TIN).sum()),
+        "n_below": int((inside["judgement"] == "미달").sum()),
         "mean_mm": valid.mean(),
         "median_mm": valid.median(),
         "min_mm": valid.min(),
         "max_mm": valid.max(),
         "std_mm": valid.std(),
-        "pass_rate": (pts["judgement"] == "적합").sum() / len(valid) if len(valid) else np.nan,
+        "pass_rate": (inside["judgement"] == "적합").sum() / len(valid) if len(valid) else np.nan,
+        "units": {"upper": u_units, "lower": l_units},
+        "warnings": warnings,
     }
     return AnalysisResult(pts, rooms, summary, s, plan, transform)

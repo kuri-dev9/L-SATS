@@ -16,7 +16,7 @@ import pandas as pd
 from . import __version__
 from .core import OUTSIDE_ROOM, AnalysisResult
 from .plot import STATUS, figure_svg, histogram, plot_plan, plot_rooms
-from .report import METHOD_LABELS, points_table
+from .report import METHOD_LABELS, _outlier_text, points_table
 
 HOW_IT_WORKS = (Path(__file__).parent / "assets" / "how_it_works.svg").read_text(encoding="utf-8")
 
@@ -88,7 +88,8 @@ def _table(df: pd.DataFrame, status_col: str | None = None, cls: str = "") -> st
     rows = []
     for _, r in df.iterrows():
         st_ = r[status_col] if status_col else ""
-        tr = {"미달": ' class="bad"', "판정불가": ' class="unk"', "제외": ' class="exc"'}.get(st_, "")
+        tr = {"미달": ' class="bad"', "판정불가": ' class="unk"', "제외": ' class="exc"',
+              "미산출": ' class="unk"'}.get(st_, "")
         cells = "".join(f"<td>{'' if pd.isna(v) else _e(v)}</td>" for v in r)
         rows.append(f"<tr{tr}>{cells}</tr>")
     return f'<table class="{cls}"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
@@ -115,7 +116,7 @@ def _sec_summary(result, meta):
          f"{n_ok}<small>/{n_judged}</small>" if result.plan is not None else f"{sm['pass_rate'] * 100:.0f}<small>%</small>",
          f"기준 {limit:g}mm 이상"),
         ("가장 얇은 곳", f"{sm['min_mm']:.0f}<small>mm</small>", f"가장 두꺼운 곳 {sm['max_mm']:.0f}mm"),
-        ("사용한 측정점", f"{sm['n_valid']}<small>/{sm['n_points']}</small>", f"이상값 {sm['n_excluded']}개 자동 제외"),
+        ("사용한 측정점", f"{sm['n_valid']}<small>/{sm['n_points']}</small>", f"제외 {sm['n_excluded']}개 · 미산출 {sm.get('n_no_value', 0)}개"),
     ]
     kpi_html = "".join(f'<div class="kpi"><div class="kl">{a}</div><div class="kv">{b}</div>'
                        f'<div class="ks">{c}</div></div>' for a, b, c in kpis)
@@ -130,7 +131,8 @@ def _sec_room_map(result, meta):
         return '<p class="muted">도면(DXF)이 없어 방별 판정도를 그리지 않았습니다.</p>'
     svg = figure_svg(plot_rooms(result, title=" "))
     return (f'<figure>{svg}<figcaption>방 안 측정점들의 평균 두께로 판정했습니다. '
-            '빗금 친 빨간 방이 기준 미달입니다.</figcaption></figure>')
+            '빗금 친 빨간 방이 기준 미달입니다. 방 색은 방 평균 판정이고, 점 색은 개별 측정점 판정입니다.'
+            '</figcaption></figure>')
 
 
 def _sec_action(result, meta):
@@ -178,7 +180,8 @@ def _sec_distribution(result, meta):
 def _sec_point_map(result, meta):
     svg = figure_svg(plot_plan(result, True, " "))
     return (f'<figure>{svg}<figcaption>점의 색: 빨간색일수록 설계보다 얇고 파란색일수록 두껍습니다. '
-            '빨간 동그라미는 기준 미달인 점, 회색 X는 제외된 점, 숫자는 두께(mm)입니다.</figcaption></figure>')
+            '빨간 동그라미는 기준 미달인 점, 회색 X는 제외된 점, 회색 동그라미는 산출 불가, 빈 네모는 영역외, '
+            '숫자는 두께(mm)입니다. 점 색은 개별 두께 기준이며 방 판정(방 평균)과 다를 수 있습니다.</figcaption></figure>')
 
 
 def _sec_excluded(result, meta):
@@ -187,18 +190,21 @@ def _sec_excluded(result, meta):
         return '<p class="muted">제외된 측정점이 없습니다.</p>'
     reasons = ex["exclude_reason"].str.split(", ").explode().value_counts()
     rs = _table(reasons.rename_axis("이유").reset_index(name="개수"), cls="narrow")
-    pt = points_table(result).loc[ex.index, ["포인트", "실명", "두께(mm)", "제외 사유"]]
-    return (f'<p>전체 {len(result.points)}개 중 {len(ex)}개를 계산에서 뺐습니다. 바닥 위 물건, 천장 배관, '
-            f'단차처럼 슬래브가 아닌 곳을 잰 값입니다.</p>{rs}{_table(pt)}')
+    pt = points_table(result).loc[ex.index, ["상부점 ID", "실명", "상태", "두께(mm)", "제외·미산출 사유"]]
+    n_none = int((ex["status"] == "미산출").sum())
+    return (f'<p>전체 {len(result.points)}개 중 {len(ex)}개를 계산에서 뺐습니다 (두께를 못 구한 미산출 {n_none}개 포함). '
+            f'바닥 위 물건, 천장 배관, 단차처럼 슬래브가 아닌 곳을 잰 값이거나 아래층에 대응할 점이 없는 곳입니다. '
+            f'미산출 점은 0mm로 채우지 않습니다.</p>{rs}{_table(pt)}')
 
 
 def _sec_method(result, meta):
     s, t = result.settings, result.transform
     rows = [
         ("두께 계산", "위층 바닥 높이(콘크리트 윗면) − 아래층 천장 높이"),
-        ("위·아래층 점 맞추기", f"{METHOD_LABELS.get(s.method, s.method)} (최대 {s.max_match_dist_m:g}m 이내)"),
+        ("위·아래층 점 맞추기", f"{METHOD_LABELS.get(s.method, s.method)} (직접 대응 최대 {s.max_match_dist_m:g}m, "
+                         f"하부점 {'재사용 허용' if s.allow_reuse else '1:1 배정'}, TIN 외삽 안 함)"),
         ("이상값 자동 제외", f"바닥·천장이 기준면에서 {s.max_surface_error_mm:g}mm 넘게 벗어난 점, "
-                       + (f"다른 점들과 크게 다른 점(MAD×{s.outlier_mad_k:g})" if s.outlier_mad_k else "통계 이상치 기준 사용 안 함")),
+                       f"통계 이상치: {_outlier_text(s)}"),
         ("방 판정", f"방 안 측정점 평균이 {s.design_mm - s.tolerance_mm:g}mm 이상이면 통과"),
     ]
     if t is not None:
@@ -219,7 +225,8 @@ def _sec_signoff(spec: ReportSpec):
 
 
 def _sec_points_table(result, meta):
-    pt = points_table(result)[["포인트", "실명", "두께(mm)", "설계 대비(mm)", "판정", "제외 사유", "대응 거리(m)"]]
+    pt = points_table(result)[["세대", "실명", "상부점 ID", "두께(mm)", "산출방법", "사용 하부점", "거리(m)", "판정",
+                               "제외·미산출 사유", "검토 메모"]]
     return _table(pt, "판정", "small")
 
 
@@ -273,6 +280,7 @@ def build_html(result: AnalysisResult, meta: dict, spec: ReportSpec | None = Non
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(title)}</title><style>{CSS}</style></head>
 <body><main class="page">
+{f'<div class="draft">{_e(s.report_draft_text)}</div>' if s.report_draft else ""}
 <header class="cover">
   <div class="tag">{_e(spec.kind)}</div>
   <h1>{_e(title)}</h1>
@@ -290,6 +298,8 @@ CSS = """
 :root{--ok:#2e9d5b;--ok-l:#e6f5ec;--bad:#c62f2f;--bad-l:#fdecec;--unk:#8a8f98;--ink:#1f2328;--mut:#5b6470;
 --line:#e3e8ef;--bg:#f3f5f8;--acc:#2f6fd6}
 *{box-sizing:border-box}
+.draft{margin:0 0 12px;padding:10px 14px;border:2px dashed var(--bad);border-radius:10px;color:var(--bad);
+font-weight:700;text-align:center;background:#fff}
 body{margin:0;background:var(--bg);color:var(--ink);
 font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif;font-size:14px;line-height:1.55}
 .page{max-width:1000px;margin:24px auto;padding:0 16px 40px}

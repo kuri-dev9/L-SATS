@@ -127,7 +127,7 @@ def _triangulate(poly: np.ndarray) -> list[tuple[int, int, int]]:
 
 
 def _prisms(polys: list[np.ndarray], heights: list[float]):
-    """방 바닥(z=0)에서 높이 h 까지 세운 기둥들을 Mesh3d 한 개 분량의 꼭짓점·면으로."""
+    """방 바닥(z=0)에서 높이 h 까지 세운 닫힌 기둥들을 Mesh3d 한 개 분량의 꼭짓점·면으로."""
     xs, ys, zs, faces = [], [], [], []
     base = 0
     for poly, h in zip(polys, heights):
@@ -135,7 +135,10 @@ def _prisms(polys: list[np.ndarray], heights: list[float]):
         xs += [*poly[:, 0], *poly[:, 0]]
         ys += [*poly[:, 1], *poly[:, 1]]
         zs += [0.0] * n + [h] * n
-        faces += [(base + n + a, base + n + b, base + n + c) for a, b, c in _triangulate(poly)]
+        tris = _triangulate(poly)
+        # 윗면과 아랫면(z=0)을 모두 막아 속이 비어 보이지 않게 한다 (꺼진 방은 z=0 쪽이 위로 보인다)
+        faces += [(base + n + a, base + n + b, base + n + c) for a, b, c in tris]
+        faces += [(base + a, base + c, base + b) for a, b, c in tris]
         for k in range(n):
             k1 = (k + 1) % n
             faces += [(base + k, base + k1, base + n + k1), (base + k, base + n + k1, base + n + k)]
