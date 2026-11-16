@@ -19,7 +19,7 @@ py -m venv .venv
 - `py`가 없으면 `python`을 씁니다. Python 3.11 이상이 필요합니다.
 - PowerShell의 `Activate.ps1`은 실행 정책 때문에 막힐 수 있으니 `.venv\Scripts\python.exe`를 직접 호출하세요.
 - 서버만 띄우고 확인하려면 `--server.headless true`를 붙이고 `http://localhost:8501/_stcore/health`가 `ok`인지 봅니다.
-- 테스트는 64개가 모두 통과해야 합니다(`sample_data/`가 없으면 그중 9개는 건너뜀) (`test.bat`으로도 실행 가능).
+- 테스트는 66개가 모두 통과해야 합니다(`sample_data/`가 없으면 그중 9개는 건너뜀) (`test.bat`으로도 실행 가능).
 - `demo_data/`는 `tools/make_demo_data.py`로 만든 가상 데이터입니다. 실제 현장 데이터(`sample_data/` 등)는 공개 저장소이므로 커밋하지 마세요.
 
 macOS/Linux: `./run.sh`, 또는 `.venv/bin/python`으로 같은 명령을 실행합니다.

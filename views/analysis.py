@@ -199,13 +199,19 @@ with st.container(border=True, key="step2"):
     key, n_ok, n_bad, n_judged = verdict(result)
     bad = rooms[rooms["judgement"] == "미달"].sort_values("mean_mm")
     with st.container(key="verdict"):
-        if result.plan is None:
+        if sm["n_valid"] == 0:
+            st.warning("쓸 수 있는 측정값이 하나도 없어 판정하지 못했어요. 아래 '자세히 보기 → 제외·미산출 점'에서 이유를 확인해 주세요.",
+                       title="판정하지 못했어요", icon=":material/help:")
+        elif result.plan is None:
             if key == "적합":
                 st.success(f"전체 평균 {sm['mean_mm']:.0f}mm로 기준({LIMIT:g}mm 이상)을 통과했어요.",
                            title="통과", icon=":material/check_circle:")
             else:
                 st.error(f"전체 평균 {sm['mean_mm']:.0f}mm로 기준({LIMIT:g}mm 이상)보다 얇아요.",
                          title="미달", icon=":material/error:")
+        elif n_judged == 0:
+            st.warning("방 안에서 쓸 수 있는 측정값이 없어 판정하지 못했어요. 아래 '자세히 보기'에서 제외 사유를 확인해 주세요.",
+                       title="판정할 수 있는 방이 없어요", icon=":material/help:")
         elif bad.empty:
             st.success(f"검사한 방 {n_judged}개가 모두 기준({LIMIT:g}mm 이상)을 통과했어요.",
                        title="모든 방 통과", icon=":material/check_circle:")
@@ -225,7 +231,8 @@ with st.container(border=True, key="step2"):
     rate = sm["n_valid"] / n_in if n_in else 0
     c = st.columns(4)
     c[0].container(key="kpi0").metric(
-        "평균 두께", f"{sm['mean_mm']:.0f} mm", f"{sm['mean_mm'] - LIMIT:+.0f} mm (기준 대비)", border=True,
+        "평균 두께", f"{sm['mean_mm']:.0f} mm" if sm["n_valid"] else "-",
+        f"{sm['mean_mm'] - LIMIT:+.0f} mm (기준 대비)" if sm["n_valid"] else None, border=True,
         height="stretch", help=f"제외된 점을 뺀 {sm['n_valid']}개 측정점의 평균")
     if result.plan is not None:
         c[1].container(key="kpi1").metric("기준 통과한 방", f"{n_ok} / {n_judged}", f"{n_ok / n_judged * 100:.0f}% 통과"

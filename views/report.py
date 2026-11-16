@@ -55,7 +55,7 @@ with st.container(border=True, horizontal=True, vertical_alignment="center"):
     if result.plan is not None:
         st.metric("통과한 방", f"{n_ok} / {n}")
         st.metric("미달 방", f"{n_bad}개")
-    st.metric("평균 두께", f"{result.summary['mean_mm']:.0f} mm")
+    st.metric("평균 두께", f"{result.summary['mean_mm']:.0f} mm" if result.summary["n_valid"] else "-")
     st.metric("사용한 측정점", f"{result.summary['n_valid']}개")
 
 left, right = st.columns([1.1, 3], gap="medium")  # 미리보기를 넓게

@@ -63,7 +63,8 @@ def clear_files() -> None:
     ss = st.session_state
     ss.files = {}
     ss.room_names = {}
-    for k in ("job_id", "job_settings", "job_opened", *META_KEYS.values(), "room_layer", *_col_keys()):
+    for k in ("job_id", "job_settings", "job_opened", "_auto_floor", *META_KEYS.values(), "room_layer",
+              *_col_keys()):
         ss.pop(k, None)
     st.query_params.pop("job", None)
 
@@ -120,8 +121,11 @@ def store_upload(kind: str) -> None:
         st.session_state.room_names = {}
     floor = guess_floor(up.name)
     target = {"upper": "meta_upper", "lower": "meta_lower"}.get(kind)
-    if floor and target and not st.session_state.get(target):
+    # 비어 있거나 전에 파일 이름에서 자동으로 채운 값이면 새 파일에 맞춰 바꾼다 (직접 쓴 값은 그대로 둔다)
+    auto = st.session_state.setdefault("_auto_floor", {})
+    if floor and target and st.session_state.get(target, "") in ("", auto.get(target)):
         st.session_state[target] = floor
+        auto[target] = floor
 
 
 def remove_file(kind: str) -> None:
@@ -245,6 +249,15 @@ def compute() -> Run:
         run.result = _analyze(run.key, upper, lower, run.plan, settings, names)
     except ValueError as e:
         run.error, run.error_title = str(e), "계산하지 못했어요"
+        return run
+    if run.plan is not None and not run.result.points["in_room"].any():
+        t = run.result.transform
+        run.error_title = "도면과 스캔 파일이 서로 맞지 않아요"
+        run.error = (f"측정점 {len(run.result.points)}개가 모두 도면의 방 밖에 놓였어요"
+                     + (f" (좌표 맞춤 오차 {t.rms_m:.1f}m)" if t is not None else "")
+                     + ". 도면(DXF)과 위층·아래층 스캔이 같은 현장·같은 층의 파일인지 확인해 주세요. "
+                       "이름이 같은 다른 폴더의 파일을 올린 경우가 많아요.")
+        run.result = None
         return run
     _autosave(run, settings)
     return run

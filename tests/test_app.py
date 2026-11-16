@@ -213,3 +213,72 @@ def test_job_reopens_from_url():
     assert at.session_state["job_id"] == job_id
     at.switch_page("views/report.py").run()
     assert not at.exception and len(at.get("download_button")) == 5
+
+
+def test_mismatched_cad_and_scans_is_an_error():
+    """다른 현장의 도면(방이 측정점과 전혀 겹치지 않음)을 올리면 결과 대신 오류를 보여 주고 내역에 저장하지 않는다."""
+    import io
+
+    import ezdxf
+    import pandas as pd
+
+    from slab import history
+
+    up = pd.read_csv(ROOT / "demo_data" / FILES["upper"])
+    doc = ezdxf.new("R2018")
+    msp = doc.modelspace()
+    for pid, x, y in up[["point_id", "x", "y"]].head(5).itertuples(index=False):  # 측정점 라벨은 맞지만
+        msp.add_circle((x * 1000, y * 1000), 50)
+        msp.add_text(pid, height=100).set_placement((x * 1000, y * 1000))
+    msp.add_lwpolyline([(0, 0), (5000, 0), (5000, 5000), (0, 5000)], close=True,  # 방은 엉뚱한 곳
+                       dxfattribs={"layer": "ROOM_BOUNDARY"})
+    buf = io.StringIO()
+    doc.write(buf)
+    files = _files()
+    files["cad"] = ("other_site.dxf", buf.getvalue().encode())
+    at = _home()
+    at.session_state["files"] = files
+    at.switch_page("views/analysis.py").run()
+    assert not at.exception
+    assert any("모두 도면의 방 밖" in e.value for e in at.error)
+    assert not [m for m in at.metric if m.label == "평균 두께"]
+    assert history.list_jobs() == []
+
+
+def test_floor_autofill_follows_new_file():
+    from views import shared  # noqa: F401
+
+    def script():
+        import sys
+
+        import streamlit as st
+
+        sys.path.insert(0, st.session_state["root"])
+        from views.shared import init_state, store_upload
+
+        class Up:
+            def __init__(self, name):
+                self.name = name
+
+            def getvalue(self):
+                return b"x"
+
+        init_state()
+        for kind, name in st.session_state["seq"]:
+            st.session_state[f"up_{kind}"] = Up(name)
+            store_upload(kind)
+        st.write(f"{st.session_state.get('meta_upper')}|{st.session_state.get('meta_lower')}")
+
+    t = AppTest.from_function(script)
+    t.session_state["root"] = str(ROOT)
+    # 위층 칸에 7F 파일을 잘못 올렸다가 8F 파일로 바꾸면 위층 이름도 8F 로 바뀐다
+    t.session_state["seq"] = [("upper", "scan_7F.csv"), ("lower", "scan_7F.csv"), ("upper", "scan_8F.csv")]
+    t.run()
+    assert t.markdown[0].value == "8F|7F"
+    # 직접 쓴 이름은 바꾸지 않는다
+    t2 = AppTest.from_function(script)
+    t2.session_state["root"] = str(ROOT)
+    t2.session_state["meta_upper"] = "9층"
+    t2.session_state["seq"] = [("upper", "scan_8F.csv")]
+    t2.run()
+    assert t2.markdown[0].value.startswith("9층|")

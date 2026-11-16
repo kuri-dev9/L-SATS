@@ -7,7 +7,7 @@
 이 저장소(L-SATS, 레이저 스캔 기반 실별 슬래브 두께 산출 Streamlit 앱)를 이어서 개발해 주세요.
 **실사용자는 Windows PC**에서 휴대용 ZIP(`START.bat`)이나 `run.bat`으로 씁니다. 개발은 macOS에서 해도 되지만,
 Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요. 먼저 `AGENTS.md`와 `README.md`를 읽고,
-`python -m pytest`로 기준 상태(64개 통과)를 확인한 뒤 시작하세요.
+`python -m pytest`로 기준 상태(66개 통과)를 확인한 뒤 시작하세요.
 
 ## 1. 지금 상태 (v0.2.0)
 
@@ -59,7 +59,7 @@ Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요
 ## 4. 실행·검증
 ```bat
 run.bat                                   :: 처음 실행 시 .venv 설치 후 http://localhost:8501
-.venv\Scripts\python.exe -m pytest        :: 64개 (sample_data 없으면 9개 건너뜀)
+.venv\Scripts\python.exe -m pytest        :: 66개 (sample_data 없으면 9개 건너뜀)
 .venv\Scripts\python.exe -m streamlit run app.py --server.headless true
 ```
 릴리스: `slab/__init__.py`의 `__version__`을 올리고 `v*` 태그를 push하면 `.github/workflows/release.yml`이 전체 ZIP과 업데이트 ZIP을 만듭니다.
