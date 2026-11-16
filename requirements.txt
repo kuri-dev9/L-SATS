@@ -6,3 +6,4 @@ ezdxf>=1.1
 matplotlib>=3.7
 openpyxl>=3.1
 plotly>=6.0
+laspy[lazrs]>=2.5

@@ -2,7 +2,7 @@
 
 실행:  streamlit run app.py
 
-왼쪽 메뉴: 홈(views/dashboard.py, 기본) · 두께 분석 · 보고서·내려받기 · 작업 내역 · 설정(맨 아래).
+왼쪽 메뉴: 홈(views/dashboard.py, 기본) · 두께 분석 · 보고서·내려받기 · LAS 변환 · 작업 내역 · 설정(맨 아래).
 올린 파일과 계산 결과는 views/shared.py 가 세션에 두고, 작업 내역(slab/history.py)에 자동 저장한다.
 
 미리보기 모드(설정 → 화면, user_settings.json 의 ui.preview_mode)를 켜면 초창기 버전처럼 꾸밈 없는 화면
@@ -59,6 +59,7 @@ else:
         "작업": [
             st.Page("views/analysis.py", title="두께 분석", icon=":material/layers:"),
             st.Page("views/report.py", title="보고서·내려받기", icon=":material/description:"),
+            st.Page("views/las.py", title="LAS 변환", icon=":material/grid_on:"),
             st.Page("views/jobs.py", title="작업 내역", icon=":material/history:"),
         ],
         "관리": [st.Page("views/settings.py", title="설정", icon=":material/settings:")],

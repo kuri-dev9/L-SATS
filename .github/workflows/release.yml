@@ -58,6 +58,20 @@ jobs:
           if (-not $ok) { throw 'START.bat did not start the app' }
           # 데모 화면 전체가 오류 없이 그려지는지 (휴대용 Python으로 계산·엑셀 생성)
           C:\check\L-SATS\python\python.exe -c "import sys; sys.path.insert(0, r'C:\check\L-SATS'); from slab import *; from slab.report import build_excel; d=r'C:\check\L-SATS\demo_data\\'; r=analyze(load_grid(d+'grid_analysis_floor_level_8F.csv'), load_grid(d+'grid_analysis_floor_level_7F.csv'), load_cad(d+'report_merge_8F.dxf')); assert len(build_excel(r, {})) > 10000; print('portable OK', round(r.summary['mean_mm'], 1))"
+      - name: 휴대용 Python으로 LAS 변환 확인
+        shell: pwsh
+        run: |
+          # 가상 LAS 3개 층 → 같은 격자 CSV (LAS_TO_GRID.bat 이 하는 일과 같다. bat 은 끝에 pause 가 있어 직접 부른다)
+          $py = 'C:\check\L-SATS\python\python.exe'
+          & $py tools\make_demo_las.py C:\lascheck
+          Push-Location C:\check\L-SATS
+          & $py -m slab.las C:\lascheck
+          if ($LASTEXITCODE -ne 0) { throw "slab.las failed: $LASTEXITCODE" }
+          Pop-Location
+          foreach ($f in '7F', '8F', '9F', 'grid') {
+            $name = if ($f -eq 'grid') { 'grid.json' } else { "grid_analysis_floor_level_$f.csv" }
+            if (-not (Test-Path "C:\lascheck\LSATS_grid\$name")) { throw "missing $name" }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: L-SATS-windows

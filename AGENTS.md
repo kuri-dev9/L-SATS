@@ -45,6 +45,7 @@ macOS/Linux: `./run.sh`, 또는 `.venv/bin/python`으로 같은 명령을 실행
 - 내려받기 버튼에 넘기는 함수는 누를 때 화면 실행 밖에서 돌므로 `st.cache_data`·`st.progress`·`st.session_state`를 쓰지 말고 `views/shared.py`의 `memo`를 씁니다(안 그러면 "missing ScriptRunContext" 경고가 쏟아짐).
 - 「새 분석」 뒤 올린 파일은 같은 파일이어도 새 작업으로 쌓입니다. 새 접속(재시작 등)이면 마지막 작업을 자동으로 엽니다(`open_last_job`).
 - 설정 맨 아래 **미리보기 모드**(`user_settings.json`의 `ui.preview_mode`, `slab/settings_store.py`의 `load_ui`/`save_ui`)를 켜면 `app.py`가 꾸밈 없는 화면(`views/preview.py`, 주소 `pg_*_v01`)으로 바꿉니다. 계산·보고서·엑셀 코드는 같아야 합니다. 작업마다 저장하는 `Settings`에는 넣지 않습니다.
+- **LAS 변환**(`slab/las.py`, 화면 `views/las.py`, 명령 `python -m slab.las`, 휴대용 `LAS_TO_GRID.bat`): 층마다 한 LAS/LAZ(1GB+)를 조금씩(`CHUNK`) 읽어 모든 층에 **같은 격자**(건물 축 방향, `grid.json`에 저장·재사용)의 바닥·천장 Z 를 `grid_analysis_floor_level_<층>.csv` 형식으로 냅니다. 파일은 올리지 않고 폴더 경로로 읽습니다. CSV 의 `grid_angle_deg`·`grid_origin_*`로 `core.grid_alignment`가 도면 없이도 건물 축에 맞춰 정렬합니다. 설정은 `Settings.las_*`. 미리보기 모드에선 메뉴·설정 탭을 숨깁니다.
 - 층별 엑셀은 받은 결과 엑셀 양식(`슬라브 두께 결과`: 제목·분포도·40행부터 표 / `포인트 위치도`)을 따르고 `방별 두께도`를 더합니다. 전체 층은 요약 엑셀 + 층별 엑셀 ZIP(`slab/report.py`의 `build_all`).
 - 보고서 영역은 `slab/report_html.py`의 `SECTIONS`/`PRESETS`에 추가합니다.
 - `.bat` 파일은 CRLF 줄바꿈과 ASCII 문자만 씁니다 (`.gitattributes`로 고정되어 있습니다).

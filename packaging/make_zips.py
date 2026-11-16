@@ -34,7 +34,8 @@ def main(pkg: str, version: str) -> None:
     print(f"update {update.stat().st_size / 2**20:.2f} MB")
     print(*names, sep="\n")
     for need in ("VERSION", "app.py", "views/analysis.py", "views/settings.py", "views/plan_viewer.py",
-                 "views/preview.py", "slab/core.py", "slab/batch.py", "tools/update.ps1", "requirements.txt"):
+                 "views/preview.py", "views/las.py", "slab/core.py", "slab/batch.py", "slab/las.py", "LAS_TO_GRID.bat",
+                 "tools/update.ps1", "requirements.txt"):
         assert f"{pkg_dir.name}/{need}" in names, need
 
 

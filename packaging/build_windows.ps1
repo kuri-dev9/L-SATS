@@ -45,6 +45,7 @@ New-Item -ItemType Directory -Force (Join-Path $pkg '.streamlit') | Out-Null
 Copy-Item (Join-Path $root '.streamlit\config.toml') (Join-Path $pkg '.streamlit')
 Copy-Item (Join-Path $PSScriptRoot 'START.bat') $pkg
 Copy-Item (Join-Path $PSScriptRoot 'UPDATE.bat') $pkg
+Copy-Item (Join-Path $PSScriptRoot 'LAS_TO_GRID.bat') $pkg
 Copy-Item (Join-Path $PSScriptRoot 'HOW-TO-USE.txt') $pkg
 Copy-Item (Join-Path $root 'requirements.txt') $pkg
 New-Item -ItemType Directory -Force (Join-Path $pkg 'tools') | Out-Null

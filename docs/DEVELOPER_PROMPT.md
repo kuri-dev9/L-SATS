@@ -21,6 +21,8 @@ Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요
 - 미리보기 모드(설정 맨 아래): 꾸밈 없는 화면 `views/preview.py`, 결과 파일은 동일.
 - 새 접속 시 마지막 작업 자동 열기, 「새 분석」은 항상 새 작업. 내려받기 함수는 `memo` 캐시(ScriptRunContext 경고 방지).
 - 시험용 여러 층 파일: `tools/make_test_floors.py` → `test_floors/`(커밋 안 함).
+- LAS 변환(`slab/las.py`·`views/las.py`·`LAS_TO_GRID.bat`): 층별 점군 → 같은 격자 높이 CSV, 건물 축 자동 정렬. 실제 현장 LAS 로는 아직 확인 못 함
+  (가상 점군 `tools/make_demo_las.py`로만 검증). 현장 파일에서 바닥·천장면 찾기와 건물 축 찾기가 맞는지 먼저 확인할 것.
 
 ## 1. v0.2.0 때 상태 (아래 판정 관련 내용은 v0.3.0에서 바뀜)
 

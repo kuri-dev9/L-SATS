@@ -96,6 +96,10 @@ def standardize_grid(raw: pd.DataFrame, columns: dict | None = None) -> pd.DataF
     has_ceiling = _as_bool(raw["has_ceiling"]) if "has_ceiling" in raw.columns else True
     df["valid_floor"] = df["floor_z"].notna() & has_floor & not_empty
     df["valid_ceiling"] = df["ceiling_z"].notna() & has_ceiling & not_empty
+    # LAS 변환(slab/las.py)이 남긴 격자 정의: 도면 없이도 건물 축에 맞춰 그리는 데 쓴다
+    for src, dst in (("grid_angle_deg", "align_deg"), ("grid_origin_x", "align_x0"), ("grid_origin_y", "align_y0")):
+        if src in raw.columns:
+            df[dst] = pd.to_numeric(raw[src], errors="coerce")
 
     return df.dropna(subset=["x", "y"]).reset_index(drop=True)
 
@@ -240,6 +244,19 @@ class Transform:
     @classmethod
     def identity(cls, method: str) -> "Transform":
         return cls(1.0, np.eye(2), np.zeros(2), 0.0, 0, method)
+
+
+def grid_alignment(grid: pd.DataFrame) -> "Transform | None":
+    """LAS 격자 정의(align_*)가 있으면 측량 좌표 → 건물 축 좌표(m) 변환. 측량 좌표는 기울어져 있어 그대로 그리면 비뚤다."""
+    if not {"align_deg", "align_x0", "align_y0"} <= set(grid.columns):
+        return None
+    v = grid[["align_deg", "align_x0", "align_y0"]].dropna()
+    if v.empty:
+        return None
+    a, x0, y0 = (float(t) for t in v.iloc[0])
+    r = np.radians(a)
+    rot = np.array([[np.cos(r), -np.sin(r)], [np.sin(r), np.cos(r)]])
+    return Transform(1.0, rot, np.array([x0, y0]), 0.0, 0, "LAS 격자 건물 축 정렬")
 
 
 def fit_similarity(cad_xy: np.ndarray, survey_xy: np.ndarray) -> Transform:
@@ -441,6 +458,11 @@ class Settings:
     # 그림 색 (두께 색 막대의 양 끝, 밖의 값은 끝 색)
     color_min_mm: float = 100.0
     color_max_mm: float = 140.0
+    # LAS 변환 (slab/las.py): 모든 층에 같은 격자
+    las_spacing_m: float = 1.5  # 격자 간격
+    las_window_m: float = 0.4  # 격자점 둘레에서 점을 모으는 정사각형 한 변
+    las_band_m: float = 0.3  # 바닥·천장 기준면에서 이 거리 안의 점만 그 면으로 본다
+    las_min_points: int = 10  # 이보다 적으면 그 면은 측정 없음
     # 출력
     excel_layout: str = "basic"  # basic: 결과+위치도+방별 두께도 / full: 방별 현황·계산 상세·설정 시트 추가
     excel_room_map: bool = True  # 엑셀에 방별 두께도(서브 자료) 시트 넣기
@@ -847,7 +869,8 @@ def analyze(
                     reasons[i] = reasons[i] + [text]
         pts["reasons"], pts["notes"] = reasons, notes
     else:
-        cad_xy = survey_xy
+        transform = grid_alignment(upper)
+        cad_xy = transform.to_cad(survey_xy) if transform is not None else survey_xy
         pts["room_id"] = "ALL"
         pts["room"] = NO_CAD
         pts["in_room"] = True

@@ -431,9 +431,9 @@ def _detail(p, room_mean: dict) -> list[list[str]]:
 
 
 def north_rotation(result: AnalysisResult) -> float | None:
-    """도면을 시계 방향으로 몇 도 돌리면 측량 좌표 방향(북쪽 위)이 되는지. 도면이 없으면 None."""
-    t = result.transform
-    if t is None or result.plan is None:
+    """그림을 시계 방향으로 몇 도 돌리면 측량 좌표 방향(북쪽 위)이 되는지. 좌표 변환이 없으면 None."""
+    t = result.transform  # 도면 정합이거나, 도면 없이 LAS 격자의 건물 축 정렬
+    if t is None:
         return None
     return round(-t.rotation_deg, 2)
 

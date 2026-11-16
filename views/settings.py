@@ -14,10 +14,10 @@ from slab import Settings
 from slab.settings_store import (
     FIELDS, GROUPS, from_dict, load_settings, load_ui, save_settings, save_ui, settings_path, to_dict,
 )
-from views.shared import sidebar_status
+from views.shared import is_preview, sidebar_status
 
 GROUP_ICONS = {"match": ":material/join_inner:", "units": ":material/straighten:",
-               "exclude": ":material/filter_alt:", "rooms": ":material/meeting_room:",
+               "exclude": ":material/filter_alt:", "rooms": ":material/meeting_room:", "las": ":material/grid_on:",
                "output": ":material/description:"}
 DEFAULT = Settings()
 
@@ -128,8 +128,10 @@ def _field(f) -> None:
         st.caption(f"기본값: {_show(f, base)}")
 
 
-tabs = st.tabs([f"{GROUP_ICONS[g]} {name}" for g, name in GROUPS.items()])
-for tab, (g, name) in zip(tabs, GROUPS.items()):
+# 미리보기 모드에서는 LAS 변환 기능을 보이지 않는다
+groups = {g: n for g, n in GROUPS.items() if not (g == "las" and is_preview())}
+tabs = st.tabs([f"{GROUP_ICONS[g]} {name}" for g, name in groups.items()])
+for tab, (g, name) in zip(tabs, groups.items()):
     items = [f for f in FIELDS if f.group == g]
     with tab:
         for i, f in enumerate(items):

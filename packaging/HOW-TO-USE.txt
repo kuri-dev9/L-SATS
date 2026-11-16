@@ -18,6 +18,9 @@ L-SATS - Slab Thickness Analyzer
 - Extract to a normal folder such as Desktop or C:\L-SATS (not inside the ZIP, not Program Files).
 - Menu (left): Home / Thickness analysis / Report / Job history / Settings.
 - Upload the scan files (CSV/Excel) and drawings (DXF) of many floors at once, or a whole folder.
+- LAS point clouds (one file per floor, 1 GB+): use menu "LAS" in the program and type the folder path,
+  or drag and drop the LAS folder onto LAS_TO_GRID.bat. The same grid is used for every floor (grid.json).
+  The CSV files are written to the "LSATS_grid" folder next to the LAS files.
 - Every analysis is saved automatically in the "work_history" folder and can be reopened from Home or Job history.
   "New analysis" keeps the old job; the last job opens again when the program restarts.
 - Settings are saved in "user_settings.json". UPDATE.bat keeps both work_history and user_settings.json.
