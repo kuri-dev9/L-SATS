@@ -1,7 +1,7 @@
 """설정 화면: 계산·출력 설정을 바꿔 user_settings.json 에 저장한다.
 
 항목 목록과 설명은 slab/settings_store.py 의 FIELDS 한 곳에서 정한다.
-판정 기준(방 평균 135mm 이상)은 고정이라 보여 주기만 한다.
+통과/미달 판정 기준은 없다(두께 현황 파악이 목적). 결과 상태(검토·미산출) 기준만 바꿀 수 있다.
 값을 바꾸면 위쪽 막대에 '저장 안 된 변경'이 보이고, 저장을 눌러야 파일에 남는다.
 """
 from __future__ import annotations
@@ -11,7 +11,9 @@ import json
 import streamlit as st
 
 from slab import Settings
-from slab.settings_store import FIELDS, GROUPS, from_dict, load_settings, save_settings, settings_path, to_dict
+from slab.settings_store import (
+    FIELDS, GROUPS, from_dict, load_settings, load_ui, save_settings, save_ui, settings_path, to_dict,
+)
 from views.shared import sidebar_status
 
 GROUP_ICONS = {"match": ":material/join_inner:", "units": ":material/straighten:",
@@ -83,13 +85,19 @@ for f in FIELDS:
 st.title("설정", icon=":material/settings:")
 st.caption("담당자용입니다. 저장한 값은 이 PC에 남아서, 프로그램을 다시 켜거나 업데이트해도 그대로 쓰입니다.")
 
+
+def _toggle_preview() -> None:
+    ui = load_ui()
+    ui["preview_mode"] = bool(st.session_state["ui_preview"])
+    save_ui(ui)
+
+
 bar = st.container(border=True, key="settings_bar")  # 저장 막대: 아래 값을 다 읽은 뒤 채운다
 
 with st.container(horizontal=True, vertical_alignment="center"):
-    st.badge(f"판정 기준 고정 · 방 평균 {DEFAULT.design_mm - DEFAULT.tolerance_mm:g} mm 이상", color="green",
-             icon=":material/lock:")
-    st.caption("방 안 측정점들의 **평균 두께**가 이 값 이상이면 통과입니다. 현장 기준으로 고정되어 있어 바꾸지 않습니다. "
-               "아래 '두께 하한·상한'은 측정 오류를 거르는 값으로, 판정 기준과는 별개입니다.")
+    st.badge("통과/미달 판정 없음 · 두께 현황", color="blue", icon=":material/info:")
+    st.caption("측정점마다 두께와 결과 상태(산출 완료·두께 범위 검토·이상치 검토·하한 이하·미산출·영역 외)를 보여 줍니다. "
+               "'결과 상태 기준' 탭에서 검토로 표시할 기준을 바꿀 수 있어요.")
 
 
 def _field(f) -> None:
@@ -165,5 +173,11 @@ with st.container(border=True):
     msg = st.session_state.pop("settings_import_msg", None)
     if msg:
         (st.error if msg[0] == "error" else st.info)(msg[1])
+
+# ---------------------------------------------------------------- 화면 모드 (맨 아래)
+# 계산 설정과 따로 바로 저장한다 (작업 결과에는 영향 없음)
+st.space("medium")
+with st.container(border=True, key="ui_box"):
+    st.toggle("미리보기 모드", value=load_ui()["preview_mode"], key="ui_preview", on_change=_toggle_preview)
 
 sidebar_status()

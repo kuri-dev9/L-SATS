@@ -1,15 +1,28 @@
-# 개발 인계 프롬프트 (v0.2.0)
+# 개발 인계 프롬프트 (v0.3.0)
 
 > 다른 개발자나 AI 개발 도구에 그대로 전달하는 프롬프트입니다. 먼저 `AGENTS.md`와 `README.md`를 읽게 하세요.
 
 ---
 
-이 저장소(L-SATS, 레이저 스캔 기반 실별 슬래브 두께 산출 Streamlit 앱)를 이어서 개발해 주세요.
+이 저장소(L-SATS, 레이저 스캔 기반 층별·측정점별 슬래브 두께 현황 산출 Streamlit 앱)를 이어서 개발해 주세요.
 **실사용자는 Windows PC**에서 휴대용 ZIP(`START.bat`)이나 `run.bat`으로 씁니다. 개발은 macOS에서 해도 되지만,
 Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요. 먼저 `AGENTS.md`와 `README.md`를 읽고,
-`python -m pytest`로 기준 상태(66개 통과)를 확인한 뒤 시작하세요.
+`python -m pytest`로 기준 상태(모두 통과)를 확인한 뒤 시작하세요.
 
-## 1. 지금 상태 (v0.2.0)
+## 0. v0.3.0에서 바뀐 것 (현장 요청)
+- **135mm 통과/미달 판정 삭제** — 목적은 현황 파악. 측정점마다 결과 상태: 산출 완료 / 두께 범위 검토(≥140) / 이상치 검토(같은 방 5점 이상, MAD 3.5배) /
+  두께 비정상(하한 이하, ≤0) / 미산출(대응점 없음·Z값 확인 필요) / 영역 외. 기준은 현장에서 받은 결과 엑셀(7F/6F)을 역산해 맞춤(이상치 규칙은 그 파일과 4/4 일치).
+- **여러 층 한꺼번에**(`slab/batch.py`): 파일 안의 바닥 높이로 층 순서, 바로 아래층과 짝, 도면은 이름의 층 → 공용 → 좌표 일치 순으로 배정. 100개 층까지 고려.
+- 화면: 층별 현황 표·막대 → 층 콤보박스·위층/아래층 버튼 → **측정점 위치도가 메인**(확대·포인트 찾기·점 누르면 상세), 방별 두께도·표·3D는 서브.
+- 출력: 층별 엑셀은 받은 결과 양식(`슬라브 두께 결과`·`포인트 위치도`) + `방별 두께도`, 전체 층 요약 엑셀, 전체 ZIP.
+- 작업 내역 파일 형식이 {파일 이름: 바이트}로 바뀜 (v0.2 작업도 열림).
+- 도면 보기 `views/plan_viewer.py`(CCv2 캔버스): 확대 한계, 마우스 회전(Shift+끌기·나침반, 1°·90° 버튼), 점 상세 카드, 브라우저 안에서만 처리(깜빡임 없음).
+- 색은 옅은 초록→연노랑→옅은 주황(채도 낮게, 방은 흰색 45% 섞음). 글자 뒤 배경 없음.
+- 미리보기 모드(설정 맨 아래): 꾸밈 없는 화면 `views/preview.py`, 결과 파일은 동일.
+- 새 접속 시 마지막 작업 자동 열기, 「새 분석」은 항상 새 작업. 내려받기 함수는 `memo` 캐시(ScriptRunContext 경고 방지).
+- 시험용 여러 층 파일: `tools/make_test_floors.py` → `test_floors/`(커밋 안 함).
+
+## 1. v0.2.0 때 상태 (아래 판정 관련 내용은 v0.3.0에서 바뀜)
 
 ### 계산 (`slab/`)
 - 두께(mm) = (상부층 `floor_z` − 하부층 `ceiling_z`) × 1000. 층간 대응은 **XY 좌표**로만 합니다(포인트 번호로 병합 금지).
@@ -41,7 +54,7 @@ Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요
 - 두 파일 모두 `UPDATE.bat`이 건드리지 않습니다(새 버전 ZIP에 없는 파일). 커밋하지 않습니다(`.gitignore`).
 
 ## 2. 지켜야 할 것
-- 판정 기준(방 평균 135 mm, 허용 오차 0)을 화면·설정에서 바꿀 수 있게 만들지 마세요.
+- 통과/미달 판정을 다시 넣지 마세요(현장 요청으로 삭제). 결과 상태 기준은 `Settings` + `FIELDS`에서 바꿉니다.
 - 계산은 `slab/`, 화면은 `views/`. 바꿀 수 있는 값은 `Settings` + `FIELDS`에 추가하고, 미확정 값은 `pending=True`.
 - 실제 현장 데이터(`sample_data/`)는 커밋 금지. 이 폴더의 CSV/DXF가 원본 형식 기준입니다. 결과(미달 여부)에 맞춰 계산을 바꾸지 말고 계산의 정확성만 검증하세요.
 - `.bat`은 CRLF·ASCII, `packaging/update.ps1`은 PowerShell 5.1용 ASCII. 새 폴더를 만들면 `packaging/build_windows.ps1`과 `packaging/make_zips.py`의 필수 목록에 넣으세요.
@@ -59,7 +72,7 @@ Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요
 ## 4. 실행·검증
 ```bat
 run.bat                                   :: 처음 실행 시 .venv 설치 후 http://localhost:8501
-.venv\Scripts\python.exe -m pytest        :: 66개 (sample_data 없으면 9개 건너뜀)
+.venv\Scripts\python.exe -m pytest        :: 모두 통과 (sample_data 없으면 일부 건너뜀)
 .venv\Scripts\python.exe -m streamlit run app.py --server.headless true
 ```
 릴리스: `slab/__init__.py`의 `__version__`을 올리고 `v*` 태그를 push하면 `.github/workflows/release.yml`이 전체 ZIP과 업데이트 ZIP을 만듭니다.

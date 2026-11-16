@@ -1,6 +1,6 @@
 """설정 페이지에서 바꾸는 값의 설명과 저장(user_settings.json).
 
-- 판정 기준(방 평균 135mm 이상, 허용 오차 0)은 고정이라 여기 없다. 파일에 적혀 있어도 무시한다.
+- 통과/미달 판정 기준은 두지 않는다(두께 현황 파악이 목적). 예전 파일의 design_mm 등 모르는 값은 무시한다.
 - 저장 파일은 프로그램 폴더의 user_settings.json (환경변수 LSATS_SETTINGS 로 위치 변경).
   UPDATE.bat 은 새 버전에 들어 있는 파일만 바꾸므로 이 파일은 업데이트해도 남는다.
 - pending=True 는 담당자 확인 전이라 기본값이 확정되지 않은 항목이다 (설정 페이지에 표시).
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .core import Settings
 
-FIXED = ("design_mm", "tolerance_mm")
+FIXED: tuple[str, ...] = ()  # 화면에서 바꾸지 않는 값 (지금은 없음)
 
 
 @dataclass(frozen=True)
@@ -33,9 +33,9 @@ class Field:
 GROUPS = {
     "match": "위·아래층 점 맞추기",
     "units": "입력 단위",
-    "exclude": "이상한 측정값 제외",
+    "exclude": "결과 상태 기준",
     "rooms": "방·세대 나누기",
-    "output": "엑셀·보고서",
+    "output": "그림·엑셀·보고서",
 }
 
 FIELDS: list[Field] = [
@@ -53,47 +53,56 @@ FIELDS: list[Field] = [
           None, 0.0, 20.0, 0.1, True),
     Field("tin_cross_room", "match", "다른 방의 아래층 점을 쓴 경우",
           "벽을 사이에 둔 점으로 계산했을 수 있습니다.",
-          {"warn": "검토 메모만 남김", "exclude": "계산에서 제외"}),
+          {"warn": "검토 메모만 남김", "exclude": "미산출로 처리"}),
     Field("xy_unit", "units", "좌표(X·Y) 단위",
           "자동: 측정점 간격으로 판단합니다(간격이 20 넘으면 mm).", {"auto": "자동", "m": "m", "mm": "mm"}),
     Field("z_unit", "units", "높이(Z) 단위",
           "자동: 층고(천장-바닥)로 판단합니다(100 넘으면 mm). 한 파일 안에서 단위가 섞이면 알려 줍니다.",
           {"auto": "자동", "m": "m", "mm": "mm"}),
-    Field("max_surface_error_mm", "exclude", "기준면에서 벗어난 정도 (mm)",
-          "바닥·천장이 층 기준 높이보다 이만큼 높거나 낮으면 바닥 위 물건·천장 설비 등으로 보고 제외합니다.",
+    Field("max_surface_error_mm", "exclude", "기준면에서 벗어난 정도 (mm) → 미산출 'Z값 확인 필요'",
+          "바닥·천장이 층 기준 높이보다 이만큼 높거나 낮으면 바닥 위 물건·천장 설비 등으로 보고 두께를 비워 둡니다.",
           None, 1.0, 1000.0, 1.0),
-    Field("outlier_method", "exclude", "통계 이상치 방식",
-          "다른 점들과 두께가 크게 다른 점을 뺍니다. MAD: 두께 중앙값에서 얼마나 떨어졌는지로 판단(기본). "
-          "IQR: 두께를 순서대로 놓고 가운데 절반(25%~75%)의 폭을 기준으로, 그 폭의 몇 배 넘게 벗어나면 뺍니다.",
+    Field("review_above_mm", "exclude", "'두께 범위 검토' 기준 (mm 이상)",
+          "두께가 이 값 이상이면 '두께 범위 검토'로 표시합니다. 값은 그대로 보여 주지만 방 평균에는 넣지 않습니다. "
+          "받은 결과 엑셀 기준 140mm.", None, 0.0, 2000.0, 1.0, True),
+    Field("low_limit_mm", "exclude", "'두께 비정상(하한 이하)' 기준 (mm 이하)",
+          "두께가 이 값 이하이면 측정 오류로 보고 '두께 비정상(하한 이하)'로 표시합니다. 받은 결과 엑셀 기준 0mm.",
+          None, -1000.0, 1000.0, 1.0, True),
+    Field("outlier_method", "exclude", "'이상치 검토' 방식",
+          "주변과 두께가 크게 다른 점을 '이상치 검토'로 표시합니다. MAD: 두께 중앙값에서 얼마나 떨어졌는지로 판단(기본). "
+          "IQR: 두께를 순서대로 놓고 가운데 절반(25%~75%)의 폭을 기준으로, 그 폭의 몇 배 넘게 벗어나면 표시합니다.",
           {"mad": "MAD (중앙값 기준)", "iqr": "IQR (사분위 범위)", "none": "사용 안 함"}),
-    Field("outlier_mad_k", "exclude", "MAD 배수", "클수록 덜 뺍니다.", None, 0.5, 20.0, 0.5),
+    Field("outlier_scope", "exclude", "이상치를 무엇과 비교할지",
+          "같은 방: 방 안의 점끼리 비교합니다(받은 결과 엑셀과 같음). 층 전체: 그 층의 모든 점과 비교합니다.",
+          {"room": "같은 방의 점끼리", "all": "층 전체 점과"}),
+    Field("outlier_min_points", "exclude", "이상치를 따질 최소 점 수",
+          "비교할 점이 이보다 적으면 이상치를 따지지 않습니다.", None, 3, 50, 1),
+    Field("outlier_mad_k", "exclude", "MAD 배수", "클수록 덜 표시합니다. 받은 결과 엑셀 기준 3.5.", None, 0.5, 20.0, 0.5),
     Field("outlier_iqr_k", "exclude", "IQR 배수",
-          "IQR 방식을 고를 때만 씁니다. 보통 1.5이고, 클수록 덜 뺍니다.", None, 0.5, 10.0, 0.1),
-    Field("outlier_side", "exclude", "이상치로 뺄 쪽",
-          "'두꺼운 쪽만'이면 실제로 얇은 곳이 이상치로 지워지지 않습니다.",
+          "IQR 방식을 고를 때만 씁니다. 보통 1.5이고, 클수록 덜 표시합니다.", None, 0.5, 10.0, 0.1),
+    Field("outlier_side", "exclude", "이상치로 볼 쪽",
+          "'두꺼운 쪽만'이면 실제로 얇은 곳이 이상치로 표시되지 않습니다.",
           {"both": "얇은 쪽·두꺼운 쪽 모두", "thick": "두꺼운 쪽만"}),
-    Field("min_thickness_mm", "exclude", "두께 하한 (mm, 0=사용 안 함)",
-          "이보다 얇은 값은 측정 오류로 보고 제외합니다. 판정 기준(135mm)과는 별개입니다.",
-          None, 0.0, 1000.0, 1.0, True),
-    Field("max_thickness_mm", "exclude", "두께 상한 (mm, 0=사용 안 함)",
-          "이보다 두꺼운 값은 측정 오류로 보고 제외합니다. 담당자 요청값 140mm의 뜻 확인 필요 — "
-          "판정 기준(135mm)과는 별개입니다.", None, 0.0, 2000.0, 1.0, True),
     Field("unit_pattern", "rooms", "세대 ID 찾는 규칙 (정규식)",
           "방 이름에서 세대를 뽑습니다. 기본값은 '101호_거실' → '101호', '코아2_EV홀' → '코아2'."),
     Field("unit_fallback", "rooms", "세대 ID가 없을 때 이름", "예: 공용"),
     Field("overlap_policy", "rooms", "방 경계가 겹친 곳의 점",
           "도면에서 두 방 경계가 겹치는 곳에 있는 점을 어떻게 할지 정합니다.",
-          {"smallest": "작은 방에 넣고 검토 메모", "exclude": "계산에서 제외"}),
+          {"smallest": "작은 방에 넣고 검토 메모", "exclude": "미산출로 처리"}),
     Field("boundary_tol_mm", "rooms", "경계선 위로 볼 거리 (mm)",
           "방 경계선에서 이 거리 안의 점은 그 방에 넣습니다.", None, 0.0, 500.0, 1.0),
+    Field("color_min_mm", "output", "두께 색 막대 시작 (mm, 초록)",
+          "위치도의 색 막대 양 끝입니다. 이보다 얇으면 가장 진한 초록으로 칠합니다. 모든 층에 같은 색 기준을 씁니다.",
+          None, -1000.0, 2000.0, 1.0),
+    Field("color_max_mm", "output", "두께 색 막대 끝 (mm, 주황)",
+          "이보다 두꺼우면 가장 진한 주황으로 칠합니다.", None, -1000.0, 2000.0, 1.0),
+    Field("map_px_per_m", "output", "포인트 위치도 그림 해상도 (1m 당 픽셀)",
+          "클수록 엑셀 위치도의 이름표가 크고 선명하지만 파일이 커집니다.", None, 60, 400, 10),
     Field("excel_layout", "output", "엑셀 구성",
-          "", {"simple": "포인트 결과 + 위치도 (2시트)", "full": "요약·방별·포인트·제외·판정도·위치도 (전체)"}),
-    Field("excel_map_scale_pct", "output", "엑셀 위치도 그림 크기 (%)",
-          "그림 크기 비율입니다. CAD 도면 축척과는 관계없습니다.", None, 10, 200, 5),
-    Field("excel_freeze_panes", "output", "엑셀 첫 행 틀고정", ""),
-    Field("excel_show_pass_rate", "output", "엑셀에 적합률 표시", "끄면 적합률은 프로그램 화면에만 나옵니다."),
-    Field("excel_tin_detail", "output", "TIN 세 점·가중치 열 펼치기",
-          "포인트 결과에 TIN 보간에 쓴 아래층 세 점의 번호·좌표·높이·가중치를 넣습니다."),
+          "", {"basic": "결과 + 포인트 위치도 + 방별 두께도", "full": "위 + 방별 현황·계산 상세·설정 (전체)"}),
+    Field("excel_room_map", "output", "엑셀에 방별 두께도(서브 자료) 넣기", "도면(DXF)이 있을 때만 들어갑니다."),
+    Field("excel_tin_detail", "output", "계산 상세에 TIN 세 점·가중치 열 펼치기",
+          "전체 구성의 '계산 상세' 시트에 TIN 보간에 쓴 아래층 세 점의 번호·좌표·높이·가중치를 넣습니다."),
     Field("report_draft", "output", "'검토 전 초안' 표시",
           "실측 기준점과 비교해 검증하기 전에는 켜 두세요."),
     Field("report_draft_text", "output", "초안 표시 문구", ""),
@@ -154,9 +163,43 @@ def load_settings(path: Path | None = None) -> Settings:
     return from_dict(data if isinstance(data, dict) else {})[0]
 
 
+def _read(p: Path) -> dict:
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def save_settings(s: Settings, path: Path | None = None) -> Path:
     p = path or settings_path()
-    p.write_text(json.dumps(to_dict(s), ensure_ascii=False, indent=2), encoding="utf-8")
+    data = {**to_dict(s)}
+    ui = _read(p).get(UI_KEY)
+    if isinstance(ui, dict):
+        data[UI_KEY] = ui  # 화면 설정은 그대로 둔다
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return p
+
+
+# ------------------------------------------------------------------ 화면 설정 (계산과 무관)
+# 작업마다 저장하는 계산 설정(Settings)과 달리, 화면을 어떻게 보일지만 정한다. 바꿔도 작업 결과는 그대로다.
+UI_KEY = "ui"
+UI_DEFAULTS = {"preview_mode": False}
+
+
+def load_ui(path: Path | None = None) -> dict:
+    ui = _read(path or settings_path()).get(UI_KEY)
+    out = dict(UI_DEFAULTS)
+    if isinstance(ui, dict):
+        out.update({k: bool(ui[k]) for k in UI_DEFAULTS if k in ui})
+    return out
+
+
+def save_ui(ui: dict, path: Path | None = None) -> Path:
+    p = path or settings_path()
+    data = _read(p)
+    data[UI_KEY] = {k: bool(ui.get(k, v)) for k, v in UI_DEFAULTS.items()}
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return p
 
 

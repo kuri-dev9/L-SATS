@@ -6,14 +6,13 @@ import datetime as _dt
 import pandas as pd
 import streamlit as st
 
-from slab import Settings, history
+from slab import history
 from views.shared import ROOT, clear_files, jobs_frame, open_and_go, sidebar_status
 
 HOW_IT_WORKS = (ROOT / "slab" / "assets" / "how_it_works.svg").read_text(encoding="utf-8")
-LIMIT = Settings.design_mm - Settings.tolerance_mm
 
 st.title("슬래브 두께 분석기", icon=":material/layers:")
-st.caption("레이저 스캔으로 잰 위층 바닥과 아래층 천장 높이의 차이로, 방마다 슬래브 두께를 계산하고 판정합니다.")
+st.caption("레이저 스캔으로 잰 위층 바닥과 아래층 천장 높이의 차이로, 층마다·측정점마다 슬래브 두께 현황을 보여 줍니다.")
 
 jobs = history.list_jobs()
 
@@ -22,26 +21,26 @@ with left:
     with st.container(border=True, height="stretch", vertical_alignment="center"):
         st.image(HOW_IT_WORKS, width="stretch")
         st.caption("슬래브는 위층의 바닥이면서 아래층의 천장인 콘크리트 판입니다. 너무 얇으면 층간소음이 커지고 "
-                   "안전에도 좋지 않아서, 설계 두께만큼 시공됐는지 방마다 확인합니다.")
+                   "안전에도 좋지 않아서, 실제로 얼마나 두껍게 시공됐는지 측정점마다 확인합니다.")
 with right:
     with st.container(border=True, height="stretch"):
         st.subheader("이렇게 씁니다", icon=":material/route:")
         st.markdown(
-            "1. **두께 분석**에서 도면(DXF)과 위층·아래층 스캔 파일을 올립니다.\n"
-            f"2. 방마다 평균 두께가 **{LIMIT:g}mm 이상**이면 통과, 아니면 미달로 판정합니다.\n"
-            "3. **보고서·내려받기**에서 보고서(PDF 인쇄)와 엑셀·CAD 도면을 받습니다.\n"
-            "4. 분석은 **작업 내역**에 자동으로 저장되어 언제든 다시 열 수 있습니다.")
+            "1. **두께 분석**에서 여러 층의 스캔 파일과 도면(DXF)을 한꺼번에 올립니다.\n"
+            "2. 파일 안의 높이로 층을 찾아 위층부터 차례로 놓고, 층마다 측정점 두께를 계산합니다.\n"
+            "3. 층을 골라 **측정점 위치도**를 확대해 보고, 방별 두께도로 방 평균도 봅니다.\n"
+            "4. **보고서·내려받기**에서 층별 엑셀·보고서와 전체 층 요약을 받습니다. 분석은 **작업 내역**에 자동 저장됩니다.")
         st.space("small")
         if st.button("새 분석 시작", icon=":material/add:", type="primary", width="stretch", on_click=clear_files):
             st.switch_page("views/analysis.py")
 
 today = _dt.date.today()
 month = [j for j in jobs if j.get("created", "")[:7] == today.strftime("%Y-%m")]
-bad = [j for j in jobs if j.get("summary", {}).get("verdict") == "미달"]
+n_floors = sum(int(j.get("summary", {}).get("n_floors") or 0) for j in jobs)
 c = st.columns(4)
 c[0].metric("저장된 작업", f"{len(jobs)}건", border=True)
 c[1].metric("이번 달 분석", f"{len(month)}건", border=True)
-c[2].metric("미달 방이 있는 작업", f"{len(bad)}건", border=True)
+c[2].metric("분석한 층", f"{n_floors}개", border=True)
 last = _dt.datetime.fromisoformat(jobs[0]["updated"]) if jobs else None
 c[3].metric("마지막 분석", f"{last.month}월 {last.day}일" if last else "-", border=True,
             help=last.strftime("%Y-%m-%d %H:%M") if last else None)

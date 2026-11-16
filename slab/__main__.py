@@ -25,7 +25,7 @@ def main() -> None:
     # Windows 콘솔(cp949 등)에서 출력할 수 없는 문자가 있어도 중단되지 않게 한다
     sys.stdout.reconfigure(errors="replace")
 
-    settings = load_settings()  # 설정 페이지에 저장한 값 (기준 두께 135mm 고정)
+    settings = load_settings()  # 설정 페이지에 저장한 값
     if a.method:
         settings = replace(settings, method=a.method)
     plan = load_cad(a.cad) if a.cad else None
@@ -38,8 +38,8 @@ def main() -> None:
 
     sm = result.summary
     print(rooms_table(result).to_string(index=False))
-    print(f"\n유효 {sm['n_valid']}/{sm['n_points']}점, 평균 {sm['mean_mm']:.1f}mm, "
-          f"미달 {sm['n_below']}점, 적합률 {sm['pass_rate'] * 100:.1f}%")
+    print(f"\n산출 완료 {sm['n_valid']}/{sm['n_points']}점, 평균 {sm['mean_mm']:.1f}mm, "
+          f"검토 {sm['n_review']}점, 미산출 {sm['n_no_value']}점, 영역 외 {sm['n_outside']}점")
     print(f"저장: {a.output}" + (f", {a.dxf_output}" if a.dxf_output else ""))
 
 

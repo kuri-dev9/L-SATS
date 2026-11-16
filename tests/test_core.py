@@ -49,19 +49,27 @@ def test_transform_matches_cad(sample):
 def test_thickness_sample(sample, method):
     upper, lower, plan = sample
     r = analyze(upper, lower, plan, Settings(method=method))
-    assert r.summary["n_valid"] >= 35
-    assert 137 < r.summary["median_mm"] < 143
-    assert r.summary["n_outside"] == 0
-    valid = r.points[~r.points["excluded"]]
-    direct = valid[valid["calc_method"] == "직접 대응"]
+    sm = r.summary
+    # 데모 두께는 131~148mm 라 140mm 이상은 '두께 범위 검토'로 나온다 (값은 그대로 보여 준다)
+    assert sm["n_valid"] + sm["n_range"] >= 35
+    assert sm["max_mm"] < 140 and sm["n_range"] > 0
+    assert sm["n_outside"] == 0
+    shown = r.points[r.points["status"].isin(["산출 완료", "두께 범위 검토", "이상치 검토"])]
+    direct = shown[shown["calc_method"] == "직접 대응"]
     assert (direct["match_dist_m"] <= r.settings.max_match_dist_m).all()
-    assert valid["thickness_mm"].notna().all()
-    # 바닥 위 물체(+0.2m 이상)는 모두 제외되어야 한다
-    assert r.points.loc[r.points["upper_floor_error_mm"] > 100, "excluded"].all()
-    # 데모에서 얇게 만든 101호_침실2(평균 131mm)만 미달
+    assert shown["thickness_mm"].notna().all()
+    # 바닥 위 물체(+0.2m 이상)는 모두 미산출. 아래층 대응이 되면 'Z값 확인 필요'(계산값은 참고로 남김),
+    # 대응도 안 되면 받은 결과 엑셀처럼 '대응점 없음'이 앞선다
+    obj = r.points[r.points["upper_floor_error_mm"] > 100]
+    assert len(obj) and (obj["status"] == "미산출").all() and obj["thickness_mm"].isna().all()
+    matched = obj["calc_thickness_mm"].notna()
+    assert (obj.loc[matched, "no_reason"] == "Z값 확인 필요").all() and matched.any()
+    assert (obj.loc[~matched, "no_reason"] == "대응점 없음").all()
+    # 통과/미달 판정은 없다. 방 평균은 '산출 완료' 점으로만
+    assert "judgement" not in r.rooms and "judgement" not in r.points
     rooms = r.rooms.set_index("room")
-    assert rooms.loc["101호_침실2", "judgement"] == "미달"
-    assert (rooms.drop("101호_침실2")["judgement"] == "적합").all()
+    ok = r.points[(r.points["room"] == "101호_침실2") & (r.points["status"] == "산출 완료")]
+    assert rooms.loc["101호_침실2", "mean_mm"] == pytest.approx(ok["thickness_mm"].mean())
     assert rooms.loc["101호_침실2", "unit"] == "101호" and rooms.loc["실_08", "unit"] == "공용"
 
 
@@ -80,8 +88,8 @@ def test_synthetic_offset_grids():
     lo = pd.DataFrame({"x": gx.ravel() + 0.05, "y": gy.ravel() - 0.04,
                        "floor_z": 0.6, "ceiling_z": 3.0 + rng.normal(0, 0.001, gx.size)})
     up.loc[5, "floor_z"] = 3.5  # 바닥 위 물체
-    r = analyze(standardize_grid(up), standardize_grid(lo), settings=Settings(design_mm=200))
-    assert r.points.loc[5, "excluded"]
+    r = analyze(standardize_grid(up), standardize_grid(lo), settings=Settings(review_above_mm=500))
+    assert r.points.loc[5, "status"] == "미산출" and r.points.loc[5, "no_reason"] == "Z값 확인 필요"
     assert r.summary["median_mm"] == pytest.approx(200, abs=3)
 
 
@@ -120,13 +128,10 @@ def test_plot_3d(sample):
     upper, lower, plan = sample
     r = analyze(upper, lower, plan)
     names = [t.name or "" for t in plot_3d(r).data]
-    # 방 판정 색(통과 7개·미달 1개)과 기준 높이 판이 그려진다
-    assert "기준 통과 (7개 방)" in names
-    assert "기준 미달 (1개 방)" in names
-    assert "기준 높이 = 135mm" in names
+    assert any(n.startswith("층 평균") for n in names)  # 판정 기준 대신 층 평균 높이 판
     rooms = [t for t in plot_room_map(r).data if t.fill == "toself"]
     assert len(rooms) == len(plan.rooms)
-    assert sum(t.fillcolor == "#f6b8b8" for t in rooms) == 1  # 미달 방 하나만 빨갛게
+    assert len({t.fillcolor for t in rooms}) > 1  # 방 평균 두께마다 색이 다르다
 
 
 def test_triangulate_concave():
@@ -152,8 +157,11 @@ def test_html_report_sections(sample):
     simple = build_html(r, meta, ReportSpec("간단 보고서", PRESETS["간단 보고서"]))
     detail = build_html(r, meta, ReportSpec("상세 보고서", PRESETS["상세 보고서"], notes="코어 확인 <예정>",
                                             custom=[("현장 사진", "별첨")], author="담당"))
-    assert "101호_침실2" in simple and "두께 분포" not in simple
+    # 메인 = 측정점 위치도, 서브 = 방별 두께도 (위치도가 먼저)
+    assert simple.index("측정점 위치도") < simple.index("방별 두께도")
+    assert "두께 범위 검토" in simple and "두께 분포" not in simple
+    assert "통과" not in simple and "미달" not in simple  # 판정 문구가 없다
     assert "두께 분포" in detail and "부록: 전체 측정점 표" in detail
     assert "현장 사진" in detail and "&lt;예정&gt;" in detail  # 직접 쓴 내용은 이스케이프
     only = build_html(r, meta, ReportSpec("간단 보고서", ["summary"]))
-    assert "방별 판정도" not in only
+    assert "방별 두께도" not in only

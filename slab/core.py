@@ -409,41 +409,43 @@ def to_meters(grid: pd.DataFrame, xy_unit: str = "auto", z_unit: str = "auto") -
 # ---------------------------------------------------------------------------
 @dataclass
 class Settings:
-    """계산·출력 설정. 판정 기준(design_mm, tolerance_mm)은 현장 기준으로 고정이고 화면에서 바꾸지 않는다.
+    """계산·출력 설정. 판정 기준(통과/미달)은 두지 않는다 — 두께 현황을 보여 주는 것이 목적이다.
 
-    나머지 값은 설정 페이지(user_settings.json)에서 바꿀 수 있다. 의미는 slab/settings_store.py 참고.
+    값은 설정 페이지(user_settings.json)에서 바꿀 수 있다. 의미는 slab/settings_store.py 참고.
     """
 
-    design_mm: float = 135.0  # 설계 슬래브 두께
-    tolerance_mm: float = 0.0  # 허용 부족량: 두께 >= 설계 - 허용 이면 적합 (현장 기준: 135mm 이상만 통과, 0 고정)
     method: str = "auto"  # auto: 직접 대응 우선→실패 시 TIN / nearest: 직접 대응만 / interpolate: TIN만
     max_match_dist_m: float = 1.2  # 상부 격자 교차점 → 가장 가까운 하부 격자 교차점 최대 수평 거리 (담당자 확인값)
-    max_surface_error_mm: float = 30.0  # 층 기준면 대비 편차가 이보다 크면 제외(물체·돌출물)
-    outlier_mad_k: float = 5.0  # MAD 이상치 배수 (0 = 사용 안 함)
+    max_surface_error_mm: float = 30.0  # 층 기준면 대비 편차가 이보다 크면 미산출(Z값 확인 필요)
     # 대응
     allow_reuse: bool = True  # 하부점 하나를 여러 상부점에 써도 되는지 (False: 가까운 쌍부터 1:1 배정)
     tin_max_edge_m: float = 0.0  # TIN 삼각형 가장 긴 변 한도 (0 = 제한 없음)
-    tin_cross_room: str = "warn"  # TIN·대응점이 다른 방 점을 쓸 때: warn(메모만) / exclude(제외)
+    tin_cross_room: str = "warn"  # TIN·대응점이 다른 방 점을 쓸 때: warn(메모만) / exclude(미산출)
     # 단위
     xy_unit: str = "auto"  # auto / m / mm
     z_unit: str = "auto"  # auto / m / mm
-    # 이상치
-    outlier_method: str = "mad"  # none / mad / iqr
+    # 결과 상태 (받은 결과 엑셀과 같은 기준)
+    review_above_mm: float = 140.0  # 이 값 이상이면 '두께 범위 검토'
+    low_limit_mm: float = 0.0  # 이 값 이하이면 '두께 비정상(하한 이하)'
+    outlier_method: str = "mad"  # none / mad / iqr  → '이상치 검토'
+    outlier_scope: str = "room"  # room: 같은 방 점끼리 비교 / all: 층 전체와 비교
+    outlier_min_points: int = 5  # 비교할 점이 이보다 적으면 이상치를 따지지 않는다
+    outlier_mad_k: float = 3.5  # MAD 이상치 배수 (0 = 사용 안 함)
     outlier_iqr_k: float = 1.5  # IQR 배수
-    outlier_side: str = "both"  # both: 두껍고 얇은 쪽 모두 / thick: 두꺼운 쪽만 (얇은 점은 지우지 않음)
-    min_thickness_mm: float = 0.0  # 이보다 얇으면 제외 (0 = 사용 안 함)
-    max_thickness_mm: float = 0.0  # 이보다 두꺼우면 제외 (0 = 사용 안 함)
+    outlier_side: str = "both"  # both: 두껍고 얇은 쪽 모두 / thick: 두꺼운 쪽만
     # 실
     unit_pattern: str = r"^(\d+호|코아\d*)"  # 실명에서 세대 ID를 뽑는 정규식 (첫 괄호)
     unit_fallback: str = "공용"  # 세대 ID가 없는 영역(코아 등)의 이름
-    overlap_policy: str = "smallest"  # 경계 중첩: smallest(작은 방에 넣고 메모) / exclude(제외)
+    overlap_policy: str = "smallest"  # 경계 중첩: smallest(작은 방에 넣고 메모) / exclude(미산출)
     boundary_tol_mm: float = 1.0  # 경계선 위로 볼 거리 (측량 좌표 기준)
+    # 그림 색 (두께 색 막대의 양 끝, 밖의 값은 끝 색)
+    color_min_mm: float = 100.0
+    color_max_mm: float = 140.0
     # 출력
-    excel_layout: str = "simple"  # simple: 포인트 결과+위치도 2시트 / full: 요약·방별 등 전체
-    excel_map_scale_pct: int = 40  # 엑셀 위치도 그림 크기(%) - CAD 축척과 무관
-    excel_freeze_panes: bool = False  # 엑셀 첫 행 틀고정
-    excel_show_pass_rate: bool = False  # 엑셀에 적합률 표시 (앱 화면에는 항상 표시)
-    excel_tin_detail: bool = True  # 포인트 결과에 TIN 세 점·가중치 열 펼치기
+    excel_layout: str = "basic"  # basic: 결과+위치도+방별 두께도 / full: 방별 현황·계산 상세·설정 시트 추가
+    excel_room_map: bool = True  # 엑셀에 방별 두께도(서브 자료) 시트 넣기
+    excel_tin_detail: bool = True  # 계산 상세 시트에 TIN 세 점·가중치 열 펼치기
+    map_px_per_m: int = 160  # 포인트 위치도 그림 해상도 (1m 당 픽셀, 이름표 글자 크기 기준)
     report_draft: bool = True  # 보고서·엑셀에 '검토 전 초안' 표시
     report_draft_text: str = "검토 전 참고용 초안 — 실측 기준점 확인 전에는 판정 근거로 쓰지 마세요"
 
@@ -458,7 +460,16 @@ class AnalysisResult:
     transform: Transform | None
 
 
-STATUS_OK, STATUS_EXCLUDED, STATUS_NONE = "산출", "제외", "미산출"
+# 측정점 결과 상태 (받은 결과 엑셀과 같은 이름)
+STATE_OK = "산출 완료"
+STATE_RANGE = "두께 범위 검토"
+STATE_OUTLIER = "이상치 검토"
+STATE_LOW = "두께 비정상(하한 이하)"
+STATE_NONE = "미산출"
+STATE_OUTSIDE = "영역 외"
+STATES = (STATE_OK, STATE_RANGE, STATE_OUTLIER, STATE_LOW, STATE_NONE, STATE_OUTSIDE)
+REVIEW_STATES = (STATE_RANGE, STATE_OUTLIER, STATE_LOW)
+WHY_NO_MATCH, WHY_Z = "대응점 없음", "Z값 확인 필요"  # 미산출 사유
 METHOD_DIRECT, METHOD_TIN = "직접 대응", "TIN 보간"
 EPS_M = 1e-9  # 허용 거리 경계(예: 정확히 0.2m)가 부동소수 오차로 빠지지 않게
 TIN_COLS = [f"tin_{k}{i}" for i in (1, 2, 3) for k in ("id", "x", "y", "z", "w")]
@@ -645,10 +656,11 @@ def match_points(upper: pd.DataFrame, lower: pd.DataFrame, s: Settings) -> pd.Da
             **tin,
         }
     )
-    # 부동소수 잡음(예: 134.99999999)이 135mm 판정을 뒤집지 않도록 1nm 단위로 반올림
+    # 부동소수 잡음(예: 139.99999999)이 경계값 분류를 뒤집지 않도록 1nm 단위로 반올림
     res["thickness_mm"] = ((res["upper_floor_z"] - res["lower_ceiling_z"]) * 1000).round(6)
 
     no_floor = ~upper["valid_floor"].to_numpy()
+    no_match = np.array([bool(r) for r in reasons]) | res["thickness_mm"].isna().to_numpy()
     for i in np.flatnonzero(no_floor):
         reasons[i].insert(0, "위층 바닥 측정 없음")
     res.loc[no_floor, "thickness_mm"] = np.nan
@@ -675,13 +687,16 @@ def match_points(upper: pd.DataFrame, lower: pd.DataFrame, s: Settings) -> pd.Da
 
     res["reasons"] = [r + f for r, f in zip(reasons, flags)]
     res["notes"] = notes
+    # 미산출 사유: 아래층에 맞는 점이 없으면 '대응점 없음', 높이 값 자체가 이상하면 'Z값 확인 필요'
+    z_issue = no_floor | np.array([bool(f) for f in flags])
+    res["no_reason"] = np.where(no_match & ~no_floor, WHY_NO_MATCH, np.where(z_issue, WHY_Z, ""))
     return res
 
 
 def _outlier_mask(t: pd.Series, s: Settings) -> pd.Series:
-    """유효 두께 중 통계 이상치. 얇은 쪽을 지우지 않는 설정이면 두꺼운 쪽만."""
+    """두께 중 통계 이상치 (MAD 또는 IQR). 얇은 쪽을 지우지 않는 설정이면 두꺼운 쪽만."""
     out = pd.Series(False, index=t.index)
-    if len(t) < 5 or s.outlier_method == "none":
+    if len(t) < max(s.outlier_min_points, 3) or s.outlier_method == "none":
         return out
     if s.outlier_method == "iqr":
         if s.outlier_iqr_k <= 0:
@@ -704,36 +719,41 @@ def _outlier_mask(t: pd.Series, s: Settings) -> pd.Series:
 
 
 def finalize_points(res: pd.DataFrame, s: Settings) -> pd.DataFrame:
-    """이상치·범위 제외를 더하고 상태(산출/제외/미산출)와 판정을 정한다."""
+    """측정점마다 결과 상태를 정한다.
+
+    우선순위: 영역 외 → 미산출(대응점 없음 / Z값 확인 필요) → 하한 이하 → 두께 범위 검토 → 이상치 검토 → 산출 완료.
+    이상치는 하한·범위 검토가 아닌 점끼리(기본: 같은 방 안에서) 비교한다. 방 평균 등 통계는 '산출 완료'만 쓴다.
+    thickness_mm 는 값을 보여 줄 점(산출 완료·검토)만 두고, 계산된 원래 값은 calc_thickness_mm 에 남긴다.
+    """
     res = res.copy()
     reasons = [list(r) for r in res["reasons"]]
     t = res["thickness_mm"]
+    inside = res["in_room"].to_numpy() if "in_room" in res else np.ones(len(res), bool)
+    none = np.array([bool(r) for r in reasons]) | t.isna().to_numpy()
+    low = ~none & (t <= s.low_limit_mm).to_numpy()
+    rng = ~none & ~low & (t >= s.review_above_mm - EPS_M).to_numpy()
+    cand = inside & ~none & ~low & ~rng
+    out = np.zeros(len(res), bool)
+    groups = res["room_id"] if (s.outlier_scope == "room" and "room_id" in res) else pd.Series("", index=res.index)
+    for _, idx in groups[cand].groupby(groups[cand]).groups.items():
+        out[res.index.get_indexer(idx)] = _outlier_mask(t.loc[idx], s).to_numpy()
 
-    def flag(mask, text):
-        for i in np.flatnonzero(np.asarray(mask)):
-            reasons[i].append(text)
-
-    if s.min_thickness_mm > 0:
-        flag(t < s.min_thickness_mm, f"두께가 하한({s.min_thickness_mm:g}mm)보다 얇음")
-    if s.max_thickness_mm > 0:
-        flag(t > s.max_thickness_mm, f"두께가 상한({s.max_thickness_mm:g}mm)보다 두꺼움")
-    ok = np.array([not r for r in reasons]) & t.notna().to_numpy()
-    if "in_room" in res:
-        ok &= res["in_room"].to_numpy()  # 영역외 점은 이상치 통계에 넣지 않는다
-    mask = _outlier_mask(t[ok], s).reindex(res.index, fill_value=False)
-    flag(mask, "두께가 다른 점들과 크게 다름")
-
-    res["status"] = np.where(res["no_value"], STATUS_NONE,
-                             np.where([bool(r) for r in reasons], STATUS_EXCLUDED, STATUS_OK))
-    res["excluded"] = res["status"] != STATUS_OK
+    state = np.select([~inside, none, low, rng, out], [STATE_OUTSIDE, STATE_NONE, STATE_LOW, STATE_RANGE,
+                                                        STATE_OUTLIER], STATE_OK).astype(object)
+    res["calc_thickness_mm"] = t
+    res["thickness_mm"] = t.where(~np.isin(state, (STATE_NONE, STATE_OUTSIDE)))
+    res["status"] = state
+    res["excluded"] = state != STATE_OK
+    why = res["no_reason"] if "no_reason" in res else pd.Series("", index=res.index)
+    # 사유 없이 미산출이 된 경우(방 경계 중첩·다른 방 하부점 등)는 첫 사유를 그대로 쓴다
+    res["no_reason"] = [(w or (r[0] if r else WHY_NO_MATCH)) if st_ == STATE_NONE else ""
+                        for w, r, st_ in zip(why, reasons, state)]
+    notes = [list(dict.fromkeys(n)) for n in res["notes"]]
+    for i in np.flatnonzero(out):
+        notes[i].append("같은 방의 다른 점들과 두께가 크게 다름" if s.outlier_scope == "room"
+                        else "층 전체 점들과 두께가 크게 다름")
     res["exclude_reason"] = [", ".join(r) for r in reasons]
-    res["review_note"] = [", ".join(dict.fromkeys(n)) for n in res["notes"]]
-    res["deviation_mm"] = res["thickness_mm"] - s.design_mm
-    limit = s.design_mm - s.tolerance_mm
-    res["judgement"] = np.where(
-        res["status"] == STATUS_NONE, STATUS_NONE,
-        np.where(res["status"] == STATUS_EXCLUDED, "제외",
-                 np.where(res["thickness_mm"] >= limit, "적합", "미달")))
+    res["review_note"] = [", ".join(n) for n in notes]
     return res.drop(columns=["reasons", "notes"])
 
 
@@ -743,16 +763,14 @@ def compute_thickness(upper: pd.DataFrame, lower: pd.DataFrame, s: Settings) -> 
 
 
 def summarize_rooms(points: pd.DataFrame, s: Settings) -> pd.DataFrame:
-    """고유 실 ID 별 통계. 이름이 같은 다른 실은 합치지 않는다. 영역외 점은 넣지 않는다."""
+    """고유 실 ID 별 두께 현황. 이름이 같은 다른 실은 합치지 않는다. 영역 외 점은 넣지 않는다.
+
+    평균·최소·최대는 '산출 완료' 점으로만 낸다 (검토·미산출 점은 개수만 센다).
+    """
     rows = []
     pts = points[points["in_room"]] if "in_room" in points else points
     for rid, g in pts.groupby("room_id", sort=False):
-        v = g.loc[~g["excluded"], "thickness_mm"]
-        mean = round(float(v.mean()), 6) if len(v) else np.nan
-        if not len(v):
-            judgement = "판정불가"
-        else:
-            judgement = "적합" if mean >= s.design_mm - s.tolerance_mm else "미달"
+        v = g.loc[g["status"] == STATE_OK, "thickness_mm"]
         rows.append(
             {
                 "room_id": rid,
@@ -760,20 +778,16 @@ def summarize_rooms(points: pd.DataFrame, s: Settings) -> pd.DataFrame:
                 "room": g["room"].iloc[0],
                 "n_points": len(g),
                 "n_valid": len(v),
-                "n_excluded": int((g["status"] == STATUS_EXCLUDED).sum()),
-                "n_no_value": int((g["status"] == STATUS_NONE).sum()),
-                "mean_mm": mean,
+                "n_review": int(g["status"].isin(REVIEW_STATES).sum()),
+                "n_no_value": int((g["status"] == STATE_NONE).sum()),
+                "mean_mm": round(float(v.mean()), 6) if len(v) else np.nan,
                 "min_mm": v.min() if len(v) else np.nan,
                 "max_mm": v.max() if len(v) else np.nan,
                 "std_mm": v.std() if len(v) > 1 else np.nan,
-                "design_mm": s.design_mm,
-                "mean_dev_mm": mean - s.design_mm,
-                "n_below": int((g["judgement"] == "미달").sum()),
-                "judgement": judgement,
             }
         )
-    cols = ["room_id", "unit", "room", "n_points", "n_valid", "n_excluded", "n_no_value", "mean_mm", "min_mm",
-            "max_mm", "std_mm", "design_mm", "mean_dev_mm", "n_below", "judgement"]
+    cols = ["room_id", "unit", "room", "n_points", "n_valid", "n_review", "n_no_value", "mean_mm", "min_mm",
+            "max_mm", "std_mm"]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -843,23 +857,25 @@ def analyze(
     pts = finalize_points(pts, s)
 
     rooms = summarize_rooms(pts, s)
-    inside = pts[pts["in_room"]]
-    valid = inside.loc[~inside["excluded"], "thickness_mm"]
+    st_ = pts["status"]
+    valid = pts.loc[st_ == STATE_OK, "thickness_mm"]
+    ok = pts[st_ == STATE_OK]
     summary = {
         "n_points": len(pts),
         "n_valid": len(valid),
-        "n_excluded": int((inside["status"] == STATUS_EXCLUDED).sum()),
-        "n_no_value": int((inside["status"] == STATUS_NONE).sum()),
-        "n_outside": int((~pts["in_room"]).sum()),
-        "n_direct": int((inside.loc[~inside["excluded"], "calc_method"] == METHOD_DIRECT).sum()),
-        "n_tin": int((inside.loc[~inside["excluded"], "calc_method"] == METHOD_TIN).sum()),
-        "n_below": int((inside["judgement"] == "미달").sum()),
+        "n_range": int((st_ == STATE_RANGE).sum()),
+        "n_outlier": int((st_ == STATE_OUTLIER).sum()),
+        "n_low": int((st_ == STATE_LOW).sum()),
+        "n_review": int(st_.isin(REVIEW_STATES).sum()),
+        "n_no_value": int((st_ == STATE_NONE).sum()),
+        "n_outside": int((st_ == STATE_OUTSIDE).sum()),
+        "n_direct": int((ok["calc_method"] == METHOD_DIRECT).sum()),
+        "n_tin": int((ok["calc_method"] == METHOD_TIN).sum()),
         "mean_mm": valid.mean(),
         "median_mm": valid.median(),
         "min_mm": valid.min(),
         "max_mm": valid.max(),
         "std_mm": valid.std(),
-        "pass_rate": (inside["judgement"] == "적합").sum() / len(valid) if len(valid) else np.nan,
         "units": {"upper": u_units, "lower": l_units},
         "warnings": warnings,
     }

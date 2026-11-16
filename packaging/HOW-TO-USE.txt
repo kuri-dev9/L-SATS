@@ -17,7 +17,9 @@ L-SATS - Slab Thickness Analyzer
 - Do not move START.bat out of this folder. The "python" folder must be next to it.
 - Extract to a normal folder such as Desktop or C:\L-SATS (not inside the ZIP, not Program Files).
 - Menu (left): Home / Thickness analysis / Report / Job history / Settings.
+- Upload the scan files (CSV/Excel) and drawings (DXF) of many floors at once, or a whole folder.
 - Every analysis is saved automatically in the "work_history" folder and can be reopened from Home or Job history.
+  "New analysis" keeps the old job; the last job opens again when the program restarts.
 - Settings are saved in "user_settings.json". UPDATE.bat keeps both work_history and user_settings.json.
 - To move to another PC, copy the work_history folder and user_settings.json too.
 
