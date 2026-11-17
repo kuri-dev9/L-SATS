@@ -4,7 +4,7 @@
 - 옮길 때 가까운 벽 면(스캔에서 찾은 선)에 붙는다 (SNAP_PX 화면 픽셀 또는 0.15 m 안)
 - 빈 곳 끌기 = 새 방(직사각형), 「방 위에 새 방 그리기」(또는 Shift+끌기)면 이미 있는 방 위에도 그린다
 - 변 우클릭 → 「여기서 벽면 나누기」: 그 자리에 꼭짓점 두 개를 넣어 변을 둘로 나눈다 (한쪽만 끌면 ㄱ·ㄷ자로 꺾인다)
-  꺾인 곳 근처 변 우클릭 → 「벽면 합치기」: 짧은 쪽 변을 긴 쪽에 맞춰 다시 편다
+  선택한 방의 꼭짓점을 끌어 다른 꼭짓점에 놓기 = 두 점을 곧게 잇고 그 사이 점을 없앤다 (사이 점이 적은 쪽)
 - 「방에서 빼기」를 켜고 끌면 그린 네모만큼 방에서 깎아 바로 저장한다 (Python: las_layout.subtract_rect)
 - 더블클릭 = 이름 바꾸기, Delete = 지우기, Ctrl+Z = 되돌리기, 오른쪽 버튼·Space+끌기 = 화면 이동, 휠 = 확대·축소
 - 새로 그리거나 마지막으로 고친 방을 목록 맨 뒤로 보내고, 저장할 때 겹친 칸은 뒤쪽 방이 갖는다 (las_layout.resolve_overlaps)
@@ -32,7 +32,7 @@ HTML = """
   </div>
   <div class="status"></div>
   <div class="menu"></div>
-  <div class="help">빈 곳 끌기 = 새 방 · 방 클릭 = 선택 · 방 안 끌기 = 이동 · 변 끌기 = 경계 이동 (벽에 붙어요) · 변 우클릭 = 벽면 나누기·합치기 · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
+  <div class="help">빈 곳 끌기 = 새 방 · 방 클릭 = 선택 · 방 안 끌기 = 이동 · 변 끌기 = 경계 이동 (벽에 붙어요) · 변 우클릭 = 벽면 나누기 · 꼭짓점을 다른 꼭짓점에 끌어 놓기 = 두 점 잇기(사이 점 없앰) · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
 </div>
 """
 
@@ -165,26 +165,48 @@ function make(root) {
     }
     return p
   }
-  function stepAt(k, i) {  // 변 i 또는 그 이웃 중 '꺾인 턱'(양옆 변이 서로 나란하고 이 변과 직각)인 변 번호
-    const p = S.rooms[k].poly, n = p.length
-    const dir = j => { const a = p[(j + n) % n], b = p[(j + 1 + n) % n]; return Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? 'h' : 'v' }
-    for (const c of [i, i - 1, i + 1]) {
-      const cc = (c + n) % n
-      if (dir(cc - 1) === dir(cc + 1) && dir(cc - 1) !== dir(cc)) return cc
-    }
-    return -1
+  function vertexAt(sx, sy, except = -1) {  // 선택한 방의 꼭짓점 (화면 8px 안)
+    if (S.sel < 0) return -1
+    let best = -1, bd = 8
+    S.rooms[S.sel].poly.forEach((q, i) => {
+      if (i === except) return
+      const [x, y] = toS(...q), d = Math.hypot(sx - x, sy - y)
+      if (d < bd) { bd = d; best = i }
+    })
+    return best
   }
-  function merge(k, c) {  // 턱 c 를 없앤다: 양옆 나란한 두 변 중 짧은 쪽을 긴 쪽 높이(위치)에 맞춘다
+  function straighten(p) {  // 거의 일자(기울기 1/10 미만, 어긋남 6 cm 미만)로 이어지는 변들을 길이 가중 평균 높이(위치) 하나로
+    const n = p.length, flat = (a, b, ax) => {
+      const d = Math.abs(b[ax] - a[ax]), L = Math.abs(b[1 - ax] - a[1 - ax])
+      return d < 0.06 && d < 0.1 * L
+    }
+    for (const ax of [1, 0]) {  // 1 = 가로 변(y 맞춤), 0 = 세로 변(x 맞춤)
+      let start = 0
+      while (start < n && flat(p[(start - 1 + n) % n], p[start], ax)) start++  // 줄의 시작점에서 출발
+      if (start === n) continue
+      for (let t = 0; t < n;) {
+        const i0 = (start + t) % n
+        let m = 0, sw = 0, sv = 0
+        while (m < n && flat(p[(i0 + m) % n], p[(i0 + m + 1) % n], ax)) {
+          const a = p[(i0 + m) % n], b = p[(i0 + m + 1) % n], w = Math.abs(b[1 - ax] - a[1 - ax]) + 1e-9
+          sw += w; sv += w * (a[ax] + b[ax]) / 2; m++
+        }
+        if (m >= 1) { const v = r3(sv / sw); for (let q = 0; q <= m; q++) p[(i0 + q) % n][ax] = v }
+        t += Math.max(m, 1)
+      }
+    }
+    return p
+  }
+  function connect(k, i, j) {  // 꼭짓점 i 와 j 를 곧게 잇고 그 사이 점을 없앤다 (사이 점이 적은 쪽, 같으면 넓이가 큰 쪽을 남긴다)
     const p = S.rooms[k].poly, n = p.length
-    const ia = (c - 1 + n) % n, ib = (c + 1) % n
-    const len = j => Math.hypot(p[(j + 1) % n][0] - p[j][0], p[(j + 1) % n][1] - p[j][1])
-    const horizA = Math.abs(p[(ia + 1) % n][1] - p[ia][1]) < 1e-9
-    const ax = horizA ? 1 : 0
-    const [keep, move] = len(ia) >= len(ib) ? [ia, ib] : [ib, ia]
-    const v = p[keep][ax]
+    const between = (a, b) => { const out = []; for (let t = (a + 1) % n; t !== b; t = (t + 1) % n) out.push(t); return out }
+    const A = between(i, j), B = between(j, i)
+    const keepIf = rm => p.filter((_, t) => !rm.includes(t))
+    let rm = A.length < B.length ? A : B.length < A.length ? B : (area(keepIf(A)) >= area(keepIf(B)) ? A : B)
+    if (!rm.length) { window.alert('이미 바로 이웃한 점이에요. 사이에 없앨 점이 없어요.'); return }
+    if (n - rm.length < 3) return
     pushUndo()
-    p[move][ax] = v; p[(move + 1) % n][ax] = v
-    S.rooms[k].poly = cleanPoly(p)
+    S.rooms[k].poly = cleanPoly(straighten(keepIf(rm)))
     S.sel = k; S.mark = null; changed()
   }
   function split(k, i, t) {  // 방 k 의 변 i 를 t(0~1) 자리에서 둘로: 같은 점 두 개를 넣어, 한쪽만 끌면 그 사이가 꺾인다
@@ -275,6 +297,16 @@ function make(root) {
       ctx.font = `11px sans-serif`; ctx.fillStyle = '#64748b'
       ctx.fillText(area(r.poly).toFixed(1) + '㎡', x, y + 15)
     })
+    // 꼭짓점 잇는 중
+    if (S.drag && S.drag.t === 'link' && S.sel >= 0) {
+      const p = S.rooms[S.sel].poly, a = toS(...p[S.drag.i])
+      const b = S.drag.j >= 0 ? toS(...p[S.drag.j]) : toS(...S.drag.b)
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); ctx.setLineDash([])
+      for (const [q, r] of [[a, 6], ...(S.drag.j >= 0 ? [[b, 8]] : [])]) {
+        ctx.fillStyle = '#16a34a'; ctx.beginPath(); ctx.arc(q[0], q[1], r, 0, 6.3); ctx.fill()
+      }
+    }
     // 새 방 그리는 중
     if (S.drag && S.drag.t === 'new') {
       const [a, b] = [toS(...S.drag.a), toS(...S.drag.b)]
@@ -326,6 +358,8 @@ function make(root) {
     S.mark = null
     if (S.cut) { S.drag = { t: 'new', a: w, b: w, cut: true }; return }
     if (S.draw || e.shiftKey) { S.drag = { t: 'new', a: w, b: w }; return }
+    const vi = vertexAt(sx, sy)
+    if (vi >= 0) { S.drag = { t: 'link', i: vi, b: w, j: -1 }; return }  // 꼭짓점 끌기 = 다른 꼭짓점과 잇기
     const ei = edgeAt(sx, sy)
     if (ei >= 0) { pushUndo(); S.drag = { t: 'edge', i: ei, s: w, o: copy(S.rooms[S.sel].poly), moved: false }; return }
     const k = roomAt(...w)
@@ -341,8 +375,10 @@ function make(root) {
   cv.addEventListener('pointermove', e => {
     const [sx, sy] = pos(e), w = toW(sx, sy), d = S.drag
     if (!d) {
-      S.hoverEdge = edgeAt(sx, sy)
-      if (S.hoverEdge >= 0) cv.style.cursor = horiz(S.rooms[S.sel].poly, S.hoverEdge) ? 'ns-resize' : 'ew-resize'
+      const hv = vertexAt(sx, sy)
+      S.hoverEdge = hv >= 0 ? -1 : edgeAt(sx, sy)
+      if (hv >= 0) cv.style.cursor = 'crosshair'
+      else if (S.hoverEdge >= 0) cv.style.cursor = horiz(S.rooms[S.sel].poly, S.hoverEdge) ? 'ns-resize' : 'ew-resize'
       else cv.style.cursor = space ? 'grab' : S.draw ? 'crosshair' : roomAt(...w) >= 0 ? 'move' : 'crosshair'
       draw(); return
     }
@@ -351,6 +387,7 @@ function make(root) {
       S.c = [d.c[0] - (sx - d.s[0]) / S.z, d.c[1] + (sy - d.s[1]) / S.z]; draw(); return
     }
     if (d.t === 'new') { d.b = w; draw(); return }
+    if (d.t === 'link') { d.b = w; d.j = vertexAt(sx, sy, d.i); draw(); return }
     const dx = w[0] - d.s[0], dy = w[1] - d.s[1]
     if (Math.hypot(dx, dy) * S.z > 2) d.moved = true
     const r = S.rooms[S.sel]
@@ -369,6 +406,7 @@ function make(root) {
     const d = S.drag; S.drag = null
     if (!d) return
     if (d.t === 'pan') { if (d.right && !d.moved) showMenu(...pos(e)); return }
+    if (d.t === 'link') { if (d.j >= 0) connect(S.sel, d.i, d.j); else draw(); return }
     if (d.t === 'new') {
       let [x0, x1] = [d.a[0], d.b[0]].sort((a, b) => a - b), [y0, y1] = [d.a[1], d.b[1]].sort((a, b) => a - b)
       x0 = snapV(x0, S.d.wx); x1 = snapV(x1, S.d.wx); y0 = snapV(y0, S.d.wy); y1 = snapV(y1, S.d.wy)
@@ -402,8 +440,6 @@ function make(root) {
     const items = [], eh = edgeAtAny(sx, sy), k = roomAt(...toW(sx, sy))
     if (eh) {
       items.push(['여기서 벽면 나누기', () => split(eh.k, eh.i, eh.t)])
-      const c = stepAt(eh.k, eh.i)
-      if (c >= 0) items.push(['벽면 합치기 (꺾인 곳 펴기)', () => merge(eh.k, c)])
     }
     const rk = eh ? eh.k : k
     if (rk >= 0) {
