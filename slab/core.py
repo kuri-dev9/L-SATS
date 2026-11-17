@@ -29,7 +29,7 @@ DEFAULT_COLUMNS = {
     "ceiling_error": "ceiling_error",
 }
 
-POINT_LABEL_RE = re.compile(r"^P\d+$")
+POINT_LABEL_RE = re.compile(r"^(P\d+|G\d{3}-\d{3})$")  # 측정점(P001) 또는 LAS 격자점(G001-001)
 OUTSIDE_ROOM = "(실 외부)"
 NO_CAD = "(도면 없음)"
 

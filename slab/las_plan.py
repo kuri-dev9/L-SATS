@@ -20,7 +20,10 @@ FACE_MAX_THICK = 0.25  # 면 하나(또는 붙어 보이는 얇은 벽)의 최�
 FACE_MIN_DENSITY = 0.25  # 면의 칸당 점 수가 벽 칸 상위 10 % 값의 이 비율보다 적으면 가구 등으로 보고 뺀다
 ROW_COVER = 0.5  # 면 띠에서 가장 긴 줄의 이 비율 넘게 차 있는 줄만 면 두께로 친다
 
+ROOM_LAYER = "ROOM_BOUNDARY"  # 두께 분석이 실 경계로 읽는 레이어 (slab.core.load_cad)
+
 LAYERS = {  # 이름: (색 번호, 설명)
+    ROOM_LAYER: (5, "실 경계와 실 이름 (방 배치 화면에서 정함)"),
     "벽선": (7, "바닥 위 1.0~1.5 m 단면에서 스캔된 곧은 벽 면"),
     "격자점": (1, "격자점 위치"),
     "점번호": (2, "격자점 이름"),
@@ -87,8 +90,12 @@ def plan_lines(plan: dict) -> dict[str, list[np.ndarray]]:
     return {"벽선": lines}
 
 
-def plan_dxf(df: pd.DataFrame, plan: dict, label: str) -> bytes:
-    """층별 DXF 평면도 (R2010, 단위 mm, 건물 축 좌표)."""
+def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None = None) -> bytes:
+    """층별 DXF 평면도 (R2010, 단위 mm, 건물 축 좌표).
+
+    rooms([{name, x0, y0, x1, y1} 건물 축 m])를 주면 ROOM_BOUNDARY 레이어에 실 경계와 이름을 넣는다.
+    격자점 이름(G001-001)이 CSV 의 point_id 와 같아서, 두께 분석이 이 도면을 측량 좌표에 자동으로 맞춘다.
+    """
     import ezdxf
 
     doc = ezdxf.new("R2010", setup=True)
@@ -106,6 +113,12 @@ def plan_dxf(df: pd.DataFrame, plan: dict, label: str) -> bytes:
 
     s_mm = float(df["grid_spacing_m"].iloc[0]) * mm if len(df) and "grid_spacing_m" in df else 1500.0
     th = s_mm * 0.08  # 글자 높이 (격자 간격에 맞춤)
+    for r in rooms or []:
+        x0, x1 = sorted((r["x0"] * mm, r["x1"] * mm))
+        y0, y1 = sorted((r["y0"] * mm, r["y1"] * mm))
+        msp.add_lwpolyline([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], close=True, dxfattribs={"layer": ROOM_LAYER})
+        msp.add_text(str(r["name"]), height=th * 1.3, dxfattribs={"layer": ROOM_LAYER}).set_placement(
+            ((x0 + x1) / 2, (y0 + y1) / 2), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
     for r in df.itertuples(index=False):
         x, y = r.local_x * mm, r.local_y * mm
         msp.add_circle((x, y), th * 0.4, dxfattribs={"layer": "격자점"})

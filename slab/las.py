@@ -35,6 +35,7 @@ GRID_FILE = "grid.json"
 OUT_DIR = "LSATS_grid"
 CSV_NAME = "grid_analysis_floor_level_{}.csv"
 DXF_NAME = "LAS_평면도_{}.dxf"
+PLAN_NAME = "plan_{}.npz"  # 평면도 칸 자료 (벽 단면·바닥면 점 수)
 NOISE_CLASSES = (7, 18)  # LAS 분류의 잡음 점
 CHUNK = 2_000_000
 SAMPLE_MAX = 400_000  # 1차 훑기에서 벽 방향을 찾을 때 쓰는 최대 점 수
@@ -441,6 +442,7 @@ def convert(files: list[Path], out_dir: Path, params: LasParams | None = None, l
         path = out_dir / CSV_NAME.format(s.label)
         df.to_csv(path, index=False, encoding="utf-8")
         from .las_plan import plan_dxf
+        np.savez_compressed(out_dir / PLAN_NAME.format(s.label), **plan)  # 방 배치 화면이 다시 쓴다
         (out_dir / DXF_NAME.format(s.label)).write_bytes(plan_dxf(df, plan, s.label))
         paths.append(path)
         rows.append({"층": s.label, "LAS 파일": s.path.name, "점 수": s.n_points,
