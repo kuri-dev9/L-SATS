@@ -21,7 +21,7 @@ import pandas as pd
 import streamlit as st
 
 from slab.las import (
-    GRID_FILE, LAS_TYPES, OUT_DIR, GridSpec, LasParams, convert, export_results, find_las_files, floor_label,
+    DXF_NAME, GRID_FILE, LAS_TYPES, OUT_DIR, GridSpec, LasParams, convert, export_results, find_las_files, floor_label,
     las_info,
 )
 from slab.settings_store import load_ui, update_ui
@@ -30,6 +30,13 @@ from views.shared import clear_files, job_settings, sidebar_status
 ss = st.session_state
 WINDOWS = os.name == "nt"
 REMOTE = st.context.ip_address is not None  # 다른 PC 에서 접속 (localhost 면 None)
+
+
+@st.cache_data(show_spinner=False, max_entries=20)
+def _plan_fig(dxf_path: str, mtime: float, csv_path: str):
+    from slab.las_plan import plan_figure
+
+    return plan_figure(Path(dxf_path).read_bytes(), pd.read_csv(csv_path))
 
 
 @st.cache_data(show_spinner=False, max_entries=500)
@@ -309,6 +316,14 @@ with st.container(border=True):
     df = pd.read_csv(res["paths"][res["labels"].index(lab)])
     view = df.assign(**{"바닥 편차(mm)": (df["floor_error"] * 1000).round(1),
                         "천장 편차(mm)": (df["ceiling_error"] * 1000).round(1)})
+    dxf = Path(res["out"]) / DXF_NAME.format(lab)
+    if dxf.exists():
+        st.plotly_chart(_plan_fig(str(dxf), dxf.stat().st_mtime, res["paths"][res["labels"].index(lab)]),
+                        config={"scrollZoom": True, "displaylogo": False}, height=560, key=f"las_plan_{lab}")
+        st.caption("평면도 미리보기 (DXF 와 같은 내용): 검은 선 = 벽 단면(바닥 위 1.0~1.5 m), 초록 선 = 바닥 외곽, "
+                   "빨간 점 = 바닥·천장을 모두 잰 격자점(회색은 한쪽만). 휠로 확대, 끌어서 이동, 점에 마우스를 올리면 높이가 보여요.")
+    else:
+        st.info("이 결과에는 평면도가 없어요 (이전 버전으로 변환). ③에서 다시 변환하면 만들어져요.", icon=":material/info:")
     left, right = st.columns([1, 1.3])
     with left:
         st.scatter_chart(view.dropna(subset=["바닥 편차(mm)"]), x="local_x", y="local_y", color="바닥 편차(mm)",

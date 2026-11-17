@@ -129,3 +129,39 @@ def plan_dxf(df: pd.DataFrame, plan: dict, label: str) -> bytes:
     buf = io.StringIO()
     doc.write(buf)
     return buf.getvalue().encode("utf-8")
+
+
+def plan_figure(dxf_bytes: bytes, df: pd.DataFrame):
+    """화면 미리보기: DXF 의 벽선·외곽선 + 격자점(마우스를 올리면 이름·높이). plotly 그림 (단위 m)."""
+    import ezdxf
+    import plotly.graph_objects as go
+
+    doc = ezdxf.read(io.StringIO(dxf_bytes.decode("utf-8")))
+    fig = go.Figure()
+    style = {"외곽선": dict(color="#7fb77e", width=1.5), "벽선": dict(color="#334155", width=1)}
+    for layer, line in style.items():
+        xs, ys = [], []
+        for e in doc.modelspace().query(f'LWPOLYLINE[layer=="{layer}"]'):
+            pts = [(x / 1000, y / 1000) for x, y, *_ in e.get_points()]
+            if e.closed and pts:
+                pts.append(pts[0])
+            xs += [p[0] for p in pts] + [None]
+            ys += [p[1] for p in pts] + [None]
+        if xs:
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=line, name=layer, hoverinfo="skip"))
+
+    def fmt(v, f):
+        return "-" if pd.isna(v) else f.format(v)
+
+    hover = [f"<b>{r.point_id}</b><br>바닥 {fmt(r.floor_z, '{:.3f}')} m<br>천장 {fmt(r.ceiling_z, '{:.3f}')} m"
+             f"<br>층고 {fmt(r.height_mm, '{:.0f}')} mm" for r in df.itertuples(index=False)]
+    ok = df["floor_z"].notna() & df["ceiling_z"].notna()
+    fig.add_trace(go.Scatter(x=df["local_x"], y=df["local_y"], mode="markers+text", name="격자점",
+                             text=df["point_id"], textposition="top right", textfont=dict(size=9, color="#64748b"),
+                             marker=dict(size=7, color=np.where(ok, "#dc2626", "#cbd5e1")),
+                             hovertext=hover, hoverinfo="text"))
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white", dragmode="pan",
+                      legend=dict(orientation="h", y=1.02, x=0), hoverlabel=dict(bgcolor="white"))
+    fig.update_xaxes(showgrid=False, zeroline=False, title="건물 축 X (m)")
+    fig.update_yaxes(showgrid=False, zeroline=False, title="건물 축 Y (m)", scaleanchor="x", scaleratio=1)
+    return fig
