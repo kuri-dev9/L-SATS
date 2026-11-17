@@ -24,6 +24,7 @@ ROOM_LAYER = "ROOM_BOUNDARY"  # 두께 분석이 실 경계로 읽는 레이어 
 
 LAYERS = {  # 이름: (색 번호, 설명)
     ROOM_LAYER: (5, "실 경계와 실 이름 (방 배치 화면에서 정함)"),
+    "벽": (8, "벽 (추정 띠: 칸막이벽은 두 면 사이, 외벽은 바깥쪽으로 추정 두께만큼)"),
     "벽선": (7, "바닥 위 1.0~1.5 m 단면에서 스캔된 곧은 벽 면"),
     "격자점": (1, "격자점 위치"),
     "점번호": (2, "격자점 이름"),
@@ -120,7 +121,11 @@ def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None 
         msp.add_lwpolyline((poly * mm).tolist(), close=True, dxfattribs={"layer": ROOM_LAYER})
         msp.add_text(str(r["name"]), height=th * 1.3, dxfattribs={"layer": ROOM_LAYER}).set_placement(
             tuple(label_point(poly) * mm), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
-    for r in df.itertuples(index=False):
+    for x0, x1, y0, y1 in (wall_bands(plan)[0] if plan else []):  # 해치만 (닫힌 선을 쓰면 두께 분석이 방으로 읽음)
+        h = msp.add_hatch(color=8, dxfattribs={"layer": "벽"})
+        h.paths.add_polyline_path([(x0 * mm, y0 * mm), (x1 * mm, y0 * mm), (x1 * mm, y1 * mm), (x0 * mm, y1 * mm)],
+                                  is_closed=True)
+    for r in df[has_data(df)].itertuples(index=False):
         x, y = r.local_x * mm, r.local_y * mm
         msp.add_circle((x, y), th * 0.4, dxfattribs={"layer": "격자점"})
         msp.add_text(r.point_id, height=th, dxfattribs={"layer": "점번호"}).set_placement((x + th * 0.6, y + th * 0.3))
@@ -142,13 +147,26 @@ def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None 
     return buf.getvalue().encode("utf-8")
 
 
-def plan_figure(dxf_bytes: bytes, df: pd.DataFrame):
-    """화면 미리보기: DXF 의 벽선 + 격자점(마우스를 올리면 이름·높이). plotly 그림 (단위 m)."""
+def has_data(df: pd.DataFrame) -> pd.Series:
+    """바닥·천장 중 하나라도 값이 있는 격자점 (그림·도면에는 이것만 그린다; 값 없는 점은 CSV 에만 남는다)."""
+    return df["floor_z"].notna() | df["ceiling_z"].notna()
+
+
+def plan_figure(dxf_bytes: bytes, df: pd.DataFrame, plan: dict | None = None):
+    """화면 미리보기: 벽 띠(회색) + DXF 의 벽선 + 값이 있는 격자점(마우스를 올리면 이름·높이). plotly 그림 (단위 m)."""
     import ezdxf
     import plotly.graph_objects as go
 
     doc = ezdxf.read(io.StringIO(dxf_bytes.decode("utf-8")))
     fig = go.Figure()
+    bands, t = wall_bands(plan) if plan else ([], 0)
+    if bands:
+        bx, by = [], []
+        for x0, x1, y0, y1 in bands:
+            bx += [x0, x1, x1, x0, x0, None]
+            by += [y0, y0, y1, y1, y0, None]
+        fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", fill="toself", fillcolor="rgba(148,163,184,0.55)",
+                                 line=dict(width=0), name=f"벽 (추정, 두께 약 {t * 1000:.0f} mm)", hoverinfo="skip"))
     style = {"벽선": dict(color="#334155", width=1.2)}
     for layer, line in style.items():
         xs, ys = [], []
@@ -164,6 +182,7 @@ def plan_figure(dxf_bytes: bytes, df: pd.DataFrame):
     def fmt(v, f):
         return "-" if pd.isna(v) else f.format(v)
 
+    df = df[has_data(df)]
     hover = [f"<b>{r.point_id}</b><br>바닥 {fmt(r.floor_z, '{:.3f}')} m<br>천장 {fmt(r.ceiling_z, '{:.3f}')} m"
              f"<br>층고 {fmt(r.height_mm, '{:.0f}')} mm"
              + ("<br><b>벽 위 — 슬라브 면을 잴 수 없어 값을 비움</b>" if getattr(r, "on_wall", False) else "")
@@ -171,10 +190,67 @@ def plan_figure(dxf_bytes: bytes, df: pd.DataFrame):
     ok = df["floor_z"].notna() & df["ceiling_z"].notna()
     fig.add_trace(go.Scatter(x=df["local_x"], y=df["local_y"], mode="markers+text", name="격자점",
                              text=df["point_id"], textposition="top right", textfont=dict(size=9, color="#64748b"),
-                             marker=dict(size=7, color=np.where(ok, "#dc2626", "#cbd5e1")),
+                             marker=dict(size=7, color="#dc2626", symbol=np.where(ok, "circle", "circle-open")),
                              hovertext=hover, hoverinfo="text"))
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white", dragmode="pan",
                       legend=dict(orientation="h", y=1.02, x=0), hoverlabel=dict(bgcolor="white"))
     fig.update_xaxes(showgrid=False, zeroline=False, title="건물 축 X (m)")
     fig.update_yaxes(showgrid=False, zeroline=False, title="건물 축 Y (m)", scaleanchor="x", scaleratio=1)
     return fig
+
+
+FACE_PAIR_GAP = (0.05, 0.40)  # 마주 본 두 벽 면 사이가 이 범위면 한 벽 (m)
+OUTER_WALL_MIN = 0.15  # 외벽 띠 두께의 최소값 (칸막이벽 두께 중앙값이 이보다 얇으면 이 값)
+
+
+def wall_bands(plan: dict) -> tuple[list[list[float]], float]:
+    """벽을 회색 띠로: ([x0, x1, y0, y1] 건물 축 m, 추정 벽 두께 m).
+
+    마주 본 두 벽 면(간격 FACE_PAIR_GAP)은 그 사이를 띠로, 짝이 없는 면(외벽처럼 한쪽만 스캔된 면)은 바닥면이 적은 쪽
+    (= 바깥)으로 칸막이벽 두께 중앙값만큼 띠를 그린다. 그림용 추정이며 계산에는 쓰지 않는다.
+    """
+    lines = plan_lines(plan)["벽선"] if plan else []
+    if not lines:
+        return [], OUTER_WALL_MIN
+    res, u0, v0 = plan["res"], plan["u0"], plan["v0"]
+    floor = plan["floor"] > 0
+    H = [(ln[0, 1], min(ln[0, 0], ln[-1, 0]), max(ln[0, 0], ln[-1, 0])) for ln in lines if abs(ln[0, 1] - ln[-1, 1]) < 1e-9]
+    V = [(ln[0, 0], min(ln[0, 1], ln[-1, 1]), max(ln[0, 1], ln[-1, 1])) for ln in lines if abs(ln[0, 0] - ln[-1, 0]) < 1e-9]
+
+    def pairs(F):
+        used, out, gaps = set(), [], []
+        for i, (c1, a1, b1) in enumerate(F):
+            best = None
+            for j, (c2, a2, b2) in enumerate(F):
+                if j == i or j in used or i in used:
+                    continue
+                gap, ov = c2 - c1, min(b1, b2) - max(a1, a2)
+                if FACE_PAIR_GAP[0] <= gap <= FACE_PAIR_GAP[1] and ov >= 0.5 * min(b1 - a1, b2 - a2):
+                    if best is None or gap < best[0]:
+                        best = (gap, j, max(a1, a2), min(b1, b2))
+            if best:
+                gap, j, a, b = best
+                used |= {i, j}
+                out.append((c1, c1 + gap, a, b))
+                gaps.append(gap)
+        return out, [f for k, f in enumerate(F) if k not in used], gaps
+
+    hp, hs, g1 = pairs(H)
+    vp, vs, g2 = pairs(V)
+    gaps = g1 + g2
+    t = max(OUTER_WALL_MIN, float(np.median(gaps))) if gaps else 0.2
+
+    def floor_near(x0, x1, y0, y1):
+        i0, i1 = int((x0 - u0) / res), int(np.ceil((x1 - u0) / res))
+        j0, j1 = int((y0 - v0) / res), int(np.ceil((y1 - v0) / res))
+        a = floor[max(j0, 0):max(j1, 0), max(i0, 0):max(i1, 0)]
+        return a.mean() if a.size else 0.0
+
+    bands = [[a, b, c1, c2] for c1, c2, a, b in hp] + [[c1, c2, a, b] for c1, c2, a, b in vp]
+    for c, a, b in hs:  # 가로 면 하나: 위·아래 중 바닥이 적은 쪽으로
+        up, dn = floor_near(a, b, c + 0.1, c + 0.4), floor_near(a, b, c - 0.4, c - 0.1)
+        bands.append([a, b, c, c + t] if up < dn else [a, b, c - t, c])
+    for c, a, b in vs:
+        rt, lf = floor_near(c + 0.1, c + 0.4, a, b), floor_near(c - 0.4, c - 0.1, a, b)
+        bands.append([c, c + t, a, b] if rt < lf else [c - t, c, a, b])
+    return [[round(float(v), 3) for v in bd] for bd in bands], round(t, 3)

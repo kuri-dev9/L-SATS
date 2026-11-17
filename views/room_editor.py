@@ -228,7 +228,13 @@ function make(root) {
   function draw() {
     if (!S.d || !S.W) return
     ctx.clearRect(0, 0, S.W, S.H)
-    // 벽
+    // 벽 띠 (추정)
+    ctx.fillStyle = 'rgba(148,163,184,0.55)'
+    for (const b of (S.d.bands || [])) {
+      const [ax, ay] = toS(b[0], b[3]), [bx, by] = toS(b[1], b[2])
+      ctx.fillRect(ax, ay, bx - ax, by - ay)
+    }
+    // 벽 면
     ctx.strokeStyle = '#334155'; ctx.lineWidth = 1.3; ctx.beginPath()
     for (const w of S.d.walls) { const a = toS(w[0], w[1]), b = toS(w[2], w[3]); ctx.moveTo(...a); ctx.lineTo(...b) }
     ctx.stroke()
@@ -461,9 +467,9 @@ _EDITOR = st.components.v2.component("lsats_room_editor", html=HTML, css=CSS, js
 
 
 def room_editor(*, key: str, walls: list, wall_x, wall_y, points: list, rooms: list[dict], fit_key: str,
-                height: int = 600):
+                height: int = 600, bands: list | None = None):
     """방 편집기를 그리고, 「저장」을 누른 실행에서만 {rooms: [...]} 를 돌려준다 (그 밖엔 None)."""
-    data = {"walls": walls, "wx": [float(v) for v in wall_x], "wy": [float(v) for v in wall_y], "pts": points,
+    data = {"walls": walls, "bands": bands or [], "wx": [float(v) for v in wall_x], "wy": [float(v) for v in wall_y], "pts": points,
             "rooms": rooms, "h": height, "fitKey": fit_key,
             "rev": hashlib.md5(json.dumps(rooms, ensure_ascii=False, sort_keys=True).encode()).hexdigest()}
     res = _EDITOR(key=key, data=data, height=height + 2, on_save_change=lambda: None)

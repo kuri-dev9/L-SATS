@@ -15,7 +15,7 @@ import streamlit as st
 
 from slab import las_layout as L
 from slab.las import CSV_NAME, DXF_NAME, OUT_DIR, PLAN_NAME
-from slab.las_plan import plan_lines
+from slab.las_plan import has_data, plan_lines, wall_bands
 from slab.settings_store import load_ui
 from views.folder_pick import native_pick
 from views.room_editor import room_editor
@@ -160,13 +160,14 @@ with st.container(border=True):
             st.rerun()
     plan, walls, (wx, wy) = _plan(str(out), base, _stamp(base))
     rooms = data["layouts"][lay]
-    grid = pd.read_csv(out / CSV_NAME.format(base), usecols=["point_id", "local_x", "local_y"])
+    grid = pd.read_csv(out / CSV_NAME.format(base), usecols=["point_id", "local_x", "local_y", "floor_z", "ceiling_z"])
+    grid = grid[has_data(grid)]  # 값이 없는 자리(벽 위·건물 밖)의 점은 그리지 않는다
 
     saved = room_editor(
         key=f"rooms_editor_{lay}", height=600, fit_key=f"{lay}/{base}", rooms=[
             {"name": r["name"], "poly": L.room_poly(r).round(3).tolist()} for r in rooms],
         walls=[[round(float(v), 3) for v in (*ln[0], *ln[-1])] for ln in walls], wall_x=wx, wall_y=wy,
-        points=grid[["local_x", "local_y"]].round(3).to_numpy().tolist())
+        points=grid[["local_x", "local_y"]].round(3).to_numpy().tolist(), bands=wall_bands(plan)[0])
     if saved and saved.get("rooms") is not None:
         new = [{"name": str(r["name"]).strip(), "poly": L.clean_poly(r["poly"])}
                for r in saved["rooms"] if str(r.get("name", "")).strip() and len(r["poly"]) >= 3]
@@ -177,7 +178,7 @@ with st.container(border=True):
         _save()
         ss.rooms_v = ss.get("rooms_v", 0) + 1
         st.rerun()
-    st.caption("검은 선 = 스캔에서 찾은 실제 벽 면 (기준선, 고칠 수 없음) · 파란 영역 = 내가 정한 방 (이 범위·이름이 도면에 들어가요) · "
+    st.caption("회색 띠 = 벽 (추정) · 검은 선 = 스캔에서 찾은 실제 벽 면 (기준선, 고칠 수 없음) · 파란 영역 = 내가 정한 방 (이 범위·이름이 도면에 들어가요) · "
                "회색 점 = 격자점 (두께를 재는 자리). **빈 곳을 끌면 새 방**, **방을 클릭**하면 주황색으로 골라지고 방 안을 끌면 통째로, "
                "**변을 끌면 그 경계만** 움직여요. 변의 일부만 옮기려면 그 자리에서 **우클릭 → 「여기서 벽면 나누기」** 후 한쪽 조각을 끌어요 (다시 펴려면 우클릭 → 「벽면 합치기」). 슬라브가 없는 곳처럼 방에서 빼야 할 곳은 「－ 방에서 빼기」를 켜고 그 범위를 끌면 바로 빠져요. 벽 가까이 가면 벽에 붙어요. 이미 있는 방 위에 새 방을 그리려면 「방 위에 새 방 그리기」를 "
                "켜세요 — 저장할 때 겹친 부분은 새 방 쪽으로 정리돼요. 다 고쳤으면 그림 오른쪽 위 **저장**을 누르세요.")
