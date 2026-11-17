@@ -1,8 +1,8 @@
 """LAS 변환 결과로 층별 DXF 평면도를 그린다 (건물 축 기준 좌표, 단위 mm).
 
-- 벽선: 바닥에서 1.0~1.5 m 높이 점(벽 단면, las.WALL_Z)이 있는 칸에서 건물 축에 나란한 곧은 벽만 뽑아
-  직사각형(두 줄 선)으로 그린다. 가로·세로로 WALL_MIN_LEN 넘게 이어지고 두께가 WALL_MAX_THICK 이하인 띠만 벽으로 본다
-  (가구·사람·잡음 덩어리는 빠진다). 창·문이 뚫린 곳은 끊긴다.
+- 벽선: 바닥에서 1.0~1.5 m 높이 점(벽 단면, las.WALL_Z)이 있는 칸에서 건물 축에 나란하게 곧게 이어진 벽 면을
+  그 자리 그대로 선으로 그린다 (두께를 지어내지 않는다). 칸막이벽은 양쪽 면이 보여 두 줄, 외벽은 안쪽 면만 보여 한 줄.
+  WALL_MIN_LEN 보다 짧거나, 두꺼운 덩어리이거나, 점이 성긴 면(가구 등)은 뺀다. 창·문이 뚫린 곳은 끊긴다.
 - 격자점: 점(원) + 이름(G001-001) + 바닥·천장 높이(m)와 층고(mm).
 
 칸 자료(plan)는 las.sample_floor 가 LAS 를 읽으면서 채운다 (las._PlanRaster).
@@ -15,13 +15,13 @@ import numpy as np
 import pandas as pd
 
 WALL_MIN_POINTS = 3  # 벽 칸으로 볼 최소 점 수 (흩어진 잡음 제외)
-WALL_MIN_LEN = 0.5  # 이보다 짧게 이어진 띠는 벽으로 보지 않는다 (m)
-WALL_MAX_THICK = 0.6  # 이보다 두꺼운 덩어리는 벽이 아니다 (가구 등, m)
-FACE_GAP = 0.3  # 벽 양쪽 면 사이가 이보다 좁으면 한 벽으로 메운다 (m)
-ROW_COVER = 0.5  # 벽 띠의 가장 긴 줄의 이 비율 넘게 차 있는 줄만 벽 두께로 친다
+WALL_MIN_LEN = 0.5  # 이보다 짧게 이어진 면은 벽으로 보지 않는다 (m)
+FACE_MAX_THICK = 0.25  # 면 하나(또는 붙어 보이는 얇은 벽)의 최대 두께. 더 두꺼운 덩어리는 가구 등 (m)
+FACE_MIN_DENSITY = 0.25  # 면의 칸당 점 수가 벽 칸 상위 10 % 값의 이 비율보다 적으면 가구 등으로 보고 뺀다
+ROW_COVER = 0.5  # 면 띠에서 가장 긴 줄의 이 비율 넘게 차 있는 줄만 면 두께로 친다
 
 LAYERS = {  # 이름: (색 번호, 설명)
-    "벽선": (7, "바닥 위 1.0~1.5 m 단면에서 뽑은 곧은 벽"),
+    "벽선": (7, "바닥 위 1.0~1.5 m 단면에서 스캔된 곧은 벽 면"),
     "격자점": (1, "격자점 위치"),
     "점번호": (2, "격자점 이름"),
     "높이": (8, "바닥·천장 높이(m), 층고(mm)"),
@@ -29,18 +29,17 @@ LAYERS = {  # 이름: (색 번호, 설명)
 }
 
 
-def _walls_one_way(mask: np.ndarray, min_cells: int, max_thick: int) -> list[tuple[int, int, int, int]]:
-    """가로로 곧은 벽 띠 → [(열0, 열1, 행0, 행1)] (칸 번호, 끝 포함)."""
+def _faces_one_way(cnt: np.ndarray, mask: np.ndarray, min_cells: int, max_thick: int,
+                   min_density: float) -> list[tuple[float, int, int]]:
+    """가로로 곧은 벽 면 → [(행 위치(칸, 점 수 가중 평균), 열0, 열1)]."""
     from scipy import ndimage
 
     runs, n = ndimage.label(mask, structure=[[0, 0, 0], [1, 1, 1], [0, 0, 0]])  # 줄마다 이어진 칸
     if not n:
         return []
-    long_run = np.bincount(runs.ravel())[1:] >= min_cells
     keep = np.zeros(n + 1, bool)
-    keep[1:] = long_run
-    band = keep[runs]
-    lab, m = ndimage.label(band)  # 위아래로 겹친 긴 줄 = 한 벽 띠
+    keep[1:] = np.bincount(runs.ravel())[1:] >= min_cells
+    lab, _ = ndimage.label(keep[runs])  # 위아래로 붙은 긴 줄 = 한 면
     out = []
     for k, sl in enumerate(ndimage.find_objects(lab), start=1):
         sub = lab[sl] == k
@@ -49,36 +48,42 @@ def _walls_one_way(mask: np.ndarray, min_cells: int, max_thick: int) -> list[tup
         r0, r1 = rows[0], rows[-1]
         if r1 - r0 + 1 > max_thick:
             continue
-        cols = np.flatnonzero(sub[r0:r1 + 1].any(0))
+        band = sub[r0:r1 + 1]
+        c = np.where(band, cnt[sl][r0:r1 + 1], 0)
+        if c.sum() / band.sum() < min_density:
+            continue
+        cols = np.flatnonzero(band.any(0))
         c0, c1 = int(np.percentile(cols, 1)), int(np.percentile(cols, 99))
         if c1 - c0 + 1 < min_cells:
             continue
-        out.append((sl[1].start + c0, sl[1].start + c1, sl[0].start + r0, sl[0].start + r1))
+        row = sl[0].start + r0 + (c.sum(1) @ np.arange(r1 - r0 + 1)) / c.sum()
+        out.append((float(row), sl[1].start + c0, sl[1].start + c1))
     return out
 
 
 def plan_lines(plan: dict) -> dict[str, list[np.ndarray]]:
-    """칸 자료 → {벽선: [건물 축 좌표(m) 닫힌 직사각형, ...]}."""
+    """칸 자료 → {벽선: [건물 축 좌표(m) 선분, ...]}. 스캔된 벽 면을 그대로 곧은 선으로 (두께를 지어내지 않는다)."""
     from scipy import ndimage
 
     res, u0, v0 = plan["res"], plan["u0"], plan["v0"]
-    wall = ndimage.binary_closing(plan["wall"] >= WALL_MIN_POINTS, iterations=1)
+    cnt = plan["wall"]
+    mask = cnt >= WALL_MIN_POINTS
+    if not mask.any():
+        return {"벽선": []}
+    ref = np.percentile(cnt[mask], 90)
     min_cells = max(2, int(round(WALL_MIN_LEN / res)))
-    max_thick = max(1, int(round(WALL_MAX_THICK / res)))
-    k = max(2, int(round(FACE_GAP / res)) + 1)
-    # 스캐너는 벽의 양쪽 면만 본다: 벽과 수직 방향으로만 메워 마주 본 두 면을 한 벽으로 (가로 벽은 위아래로)
-    across_h = ndimage.binary_closing(wall, structure=np.ones((k, 1), bool))
-    across_v = ndimage.binary_closing(wall, structure=np.ones((1, k), bool))
-    rects = []
-    for c0, c1, r0, r1 in _walls_one_way(across_h, min_cells, max_thick):  # 가로 벽
-        rects.append((c0, c1, r0, r1))
-    for r0, r1, c0, c1 in _walls_one_way(across_v.T, min_cells, max_thick):  # 세로 벽 (전치)
-        rects.append((c0, c1, r0, r1))
+    max_thick = max(1, int(round(FACE_MAX_THICK / res)))
+    dens = FACE_MIN_DENSITY * ref
     lines = []
-    for c0, c1, r0, r1 in rects:
-        x0, x1 = u0 + c0 * res, u0 + (c1 + 1) * res
-        y0, y1 = v0 + r0 * res, v0 + (r1 + 1) * res
-        lines.append(np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]))
+    # 면을 따라 한 칸짜리 빈틈만 잇는다 (가로 면은 가로로, 세로 면은 세로로)
+    mh = ndimage.binary_closing(mask, structure=np.ones((1, 3), bool))
+    for row, c0, c1 in _faces_one_way(cnt, mh, min_cells, max_thick, dens):
+        y = v0 + (row + 0.5) * res
+        lines.append(np.array([[u0 + c0 * res, y], [u0 + (c1 + 1) * res, y]]))
+    mv = ndimage.binary_closing(mask, structure=np.ones((3, 1), bool))
+    for col, r0, r1 in _faces_one_way(cnt.T, mv.T, min_cells, max_thick, dens):
+        x = u0 + (col + 0.5) * res
+        lines.append(np.array([[x, v0 + r0 * res], [x, v0 + (r1 + 1) * res]]))
     return {"벽선": lines}
 
 

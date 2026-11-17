@@ -320,7 +320,7 @@ with st.container(border=True):
     if dxf.exists():
         st.plotly_chart(_plan_fig(str(dxf), dxf.stat().st_mtime, res["paths"][res["labels"].index(lab)]),
                         config={"scrollZoom": True, "displaylogo": False}, height=560, key=f"las_plan_{lab}")
-        st.caption("평면도 미리보기 (DXF 와 같은 내용): 검은 직사각형 = 벽(바닥 위 1.0~1.5 m 단면에서 건물 축에 나란한 곧은 벽만), "
+        st.caption("평면도 미리보기 (DXF 와 같은 내용): 검은 선 = 스캔된 벽 면(바닥 위 1.0~1.5 m 단면, 칸막이벽은 두 줄·외벽은 안쪽 면 한 줄), "
                    "빨간 점 = 바닥·천장을 모두 잰 격자점(회색은 한쪽만). 휠로 확대, 끌어서 이동, 점에 마우스를 올리면 높이가 보여요.")
     else:
         st.info("이 결과에는 평면도가 없어요 (이전 버전으로 변환). ③에서 다시 변환하면 만들어져요.", icon=":material/info:")
