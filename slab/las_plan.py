@@ -192,7 +192,7 @@ def plan_figure(dxf_bytes: bytes, df: pd.DataFrame, plan: dict | None = None):
                              text=df["point_id"], textposition="top right", textfont=dict(size=9, color="#64748b"),
                              marker=dict(size=7, color="#dc2626", symbol=np.where(ok, "circle", "circle-open")),
                              customdata=df["point_id"], hovertext=hover, hoverinfo="text"))
-    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white", dragmode="pan",
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white", dragmode="select",
                       legend=dict(orientation="h", y=1.02, x=0), hoverlabel=dict(bgcolor="white"))
     fig.update_xaxes(showgrid=False, zeroline=False, title="건물 축 X (m)")
     fig.update_yaxes(showgrid=False, zeroline=False, title="건물 축 Y (m)", scaleanchor="x", scaleratio=1)

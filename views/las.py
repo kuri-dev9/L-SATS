@@ -234,7 +234,8 @@ with st.container(border=True):
             if picked:
                 st.markdown(f"고른 점: **{', '.join(picked)}**")
             else:
-                st.caption("불필요한 점은 그림에서 클릭해 고르세요 (여러 개: Shift+클릭, 또는 위쪽 도구의 박스 선택).")
+                st.caption("불필요한 점은 그림에서 **끌어서 네모로 잡으면** 한꺼번에 골라져요 (점 하나는 클릭). "
+                           "확대는 마우스 휠, 화면 이동은 위쪽 도구의 손 모양.")
             if st.button(f"고른 점 빼기 ({len(picked)}개)", icon=":material/delete:", key="las_ex_go", disabled=not picked,
                          help="고른 격자점을 결과(CSV·도면·두께 분석)에서 뺍니다. 다시 변환해도 빠진 채로 있고, 아래에서 되살릴 수 있어요."):
                 from slab.las_layout import exclude_points
@@ -257,7 +258,7 @@ with st.container(border=True):
                     st.rerun()
         st.caption("평면도 미리보기 (DXF 와 같은 내용): 검은 선 = 스캔된 벽 면(바닥 위 1.0~1.5 m 단면, 칸막이벽은 두 줄·외벽은 안쪽 면 한 줄), "
                    "회색 띠 = 벽(칸막이벽은 두 면 사이, 외벽은 바깥쪽으로 추정 두께만큼), 빨간 점 = 바닥·천장을 모두 잰 격자점(빈 동그라미는 한쪽만). "
-                   "값이 없는 자리(벽 위·건물 밖)의 점은 그리지 않아요. 휠로 확대, 끌어서 이동, 점에 마우스를 올리면 높이가 보여요.")
+                   "값이 없는 자리(벽 위·건물 밖)의 점은 그리지 않아요. 휠로 확대, 끌면 점 고르기, 점에 마우스를 올리면 높이가 보여요.")
     else:
         st.info("이 결과에는 평면도가 없어요 (이전 버전으로 변환). ③에서 다시 변환하면 만들어져요.", icon=":material/info:")
     left, right = st.columns([1, 1.3])
