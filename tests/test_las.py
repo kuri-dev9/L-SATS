@@ -82,3 +82,42 @@ def test_find_axis_rotated_rectangle():
     a = np.radians(-31.0)
     xy = np.column_stack([lx * np.cos(a) - ly * np.sin(a), lx * np.sin(a) + ly * np.cos(a)])
     assert find_axis(xy) == pytest.approx(-31.0, abs=0.2)
+
+
+def test_export_single_and_per_floor(converted):
+    import io
+
+    d, mk, grid, summary, paths = converted
+    from slab.las import export_results
+
+    labels = list(summary["층"])
+    each = export_results(paths, labels, "floor", "csv")
+    assert sorted(each) == [f"grid_analysis_floor_level_{f}.csv" for f in mk.FLOORS]
+    assert all(v[:3] == b"\xef\xbb\xbf" for v in each.values())  # 엑셀에서 한글이 안 깨지게
+    one = export_results(paths, labels, "single", "csv")
+    allf = pd.read_csv(io.BytesIO(one["LAS_격자높이_전체.csv"]), encoding="utf-8-sig")
+    assert list(allf["층"].unique()) == list(mk.FLOORS) and len(allf) == sum(len(pd.read_csv(p)) for p in paths)
+    book = export_results(paths, labels, "single", "xlsx", summary)
+    assert pd.ExcelFile(io.BytesIO(book["LAS_격자높이_전체.xlsx"])).sheet_names == ["요약", *mk.FLOORS]
+    assert len(export_results(paths, labels, "floor", "xlsx")) == len(mk.FLOORS)
+
+
+def test_find_las_files_recursive(las_dir, tmp_path):
+    d, mk = las_dir
+    sub = tmp_path / "a" / "b"
+    sub.mkdir(parents=True)
+    (sub / "x_7F.LAZ").write_bytes(b"")
+    (tmp_path / "note.txt").write_text("x")
+    from slab.las import find_las_files
+
+    assert find_las_files(tmp_path) == []
+    assert [p.name for p in find_las_files(tmp_path, recursive=True)] == ["x_7F.LAZ"]
+
+
+def test_ui_remembers_las_folders():
+    from slab.settings_store import load_ui, update_ui
+
+    update_ui(las_last_folder="/data/las")
+    update_ui(preview_mode=True)
+    ui = load_ui()
+    assert ui["las_last_folder"] == "/data/las" and ui["preview_mode"] is True and ui["las_out_folder"] == ""

@@ -195,23 +195,38 @@ def save_settings(s: Settings, path: Path | None = None) -> Path:
 # ------------------------------------------------------------------ 화면 설정 (계산과 무관)
 # 작업마다 저장하는 계산 설정(Settings)과 달리, 화면을 어떻게 보일지만 정한다. 바꿔도 작업 결과는 그대로다.
 UI_KEY = "ui"
-UI_DEFAULTS = {"preview_mode": False}
+UI_DEFAULTS = {
+    "preview_mode": False,  # 꾸밈 없는 미리보기 화면
+    "las_last_folder": "",  # LAS 변환에서 마지막으로 연 폴더 (다음에 그 폴더에서 이어서)
+    "las_out_folder": "",  # LAS 변환 결과를 마지막으로 저장한 폴더
+}
+
+
+def _ui_value(v, default):
+    return bool(v) if isinstance(default, bool) else str(v)
 
 
 def load_ui(path: Path | None = None) -> dict:
     ui = _read(path or settings_path()).get(UI_KEY)
     out = dict(UI_DEFAULTS)
     if isinstance(ui, dict):
-        out.update({k: bool(ui[k]) for k in UI_DEFAULTS if k in ui})
+        out.update({k: _ui_value(ui[k], d) for k, d in UI_DEFAULTS.items() if k in ui})
     return out
 
 
 def save_ui(ui: dict, path: Path | None = None) -> Path:
+    """화면 설정을 저장한다. ui 에 없는 항목은 저장돼 있던 값을 그대로 둔다."""
     p = path or settings_path()
     data = _read(p)
-    data[UI_KEY] = {k: bool(ui.get(k, v)) for k, v in UI_DEFAULTS.items()}
+    cur = load_ui(p)
+    data[UI_KEY] = {k: _ui_value(ui.get(k, cur[k]), d) for k, d in UI_DEFAULTS.items()}
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return p
+
+
+def update_ui(**changes) -> None:
+    """화면 설정 일부만 바꿔 저장한다 (예: update_ui(las_last_folder=...))."""
+    save_ui({**load_ui(), **changes})
 
 
 def changed(s: Settings) -> dict:

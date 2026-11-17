@@ -350,6 +350,56 @@ def convert(files: list[Path], out_dir: Path, params: LasParams | None = None, l
     return grid, pd.DataFrame(rows), paths
 
 
+def find_las_files(folder: Path, recursive: bool = False) -> list[Path]:
+    """폴더 안의 LAS/LAZ (확장자 대소문자 무시). recursive 면 하위 폴더까지 (결과 폴더 LSATS_grid 는 뺀다)."""
+    folder = Path(folder)
+    if not recursive:
+        return find_las(folder)
+    out = [p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in LAS_TYPES and OUT_DIR not in p.parts]
+    return sorted(out)
+
+
+def export_results(csv_paths: list[Path], labels: list[str], mode: str = "floor", fmt: str = "csv",
+                   summary: pd.DataFrame | None = None) -> dict[str, bytes]:
+    """변환 결과를 저장용 파일로. mode: floor(층마다 파일) / single(한 파일). fmt: csv / xlsx.
+
+    한 파일 CSV 는 맨 앞에 '층' 열을 붙여 모든 층을 이어 붙이고, 한 파일 엑셀은 '요약' 시트 + 층마다 시트.
+    CSV 는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM 으로 쓴다. {파일 이름: 내용}.
+    """
+    import io
+
+    frames = [pd.read_csv(p) for p in csv_paths]
+    out: dict[str, bytes] = {}
+    if mode == "single":
+        if fmt == "csv":
+            allf = pd.concat([f.assign(**{"층": lab})[["층", *f.columns]] for f, lab in zip(frames, labels)],
+                             ignore_index=True)
+            out["LAS_격자높이_전체.csv"] = allf.to_csv(index=False).encode("utf-8-sig")
+        else:
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+                if summary is not None and not summary.empty:
+                    summary.to_excel(xw, sheet_name="요약", index=False)
+                for f, lab in zip(frames, labels):
+                    f.to_excel(xw, sheet_name=_sheet_name(lab), index=False)
+            out["LAS_격자높이_전체.xlsx"] = buf.getvalue()
+    else:
+        for f, lab in zip(frames, labels):
+            if fmt == "csv":
+                out[CSV_NAME.format(lab)] = f.to_csv(index=False).encode("utf-8-sig")
+            else:
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+                    f.to_excel(xw, sheet_name=_sheet_name(lab), index=False)
+                out[f"LAS_격자높이_{lab}.xlsx"] = buf.getvalue()
+    return out
+
+
+def _sheet_name(label: str) -> str:
+    bad = '[]:*?/\\'
+    return "".join("_" if c in bad else c for c in str(label))[:31] or "층"
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="python -m slab.las",
                                  description="층마다 한 개인 LAS/LAZ 파일에서 같은 격자의 바닥·천장 높이 CSV 를 만든다")
