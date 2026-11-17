@@ -69,3 +69,4 @@ jobs:
           if ((Run stop) -ne 0) { throw 'final stop failed' }
           if ((Run status) -eq 0) { throw 'status: should be stopped at the end' }
           Write-Host 'run.bat commands OK'
+          exit 0
