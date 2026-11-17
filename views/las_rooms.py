@@ -16,7 +16,7 @@ import streamlit as st
 
 from slab import las_layout as L
 from slab.las import CSV_NAME, DXF_NAME, OUT_DIR, PLAN_NAME
-from slab.las_plan import has_data, plan_lines, wall_bands, wall_shapes
+from slab.las_plan import edited_lines, has_data, plan_lines, wall_bands, wall_shapes
 from slab.settings_store import load_ui
 from views.folder_pick import native_pick
 from views.room_editor import room_editor
@@ -166,14 +166,16 @@ with st.container(border=True):
     grid = grid[has_data(grid)]  # 값이 없는 자리(벽 위·건물 밖)의 점은 그리지 않는다
     my_walls = data["walls"].get(lay)  # 실무자가 고친 벽 (없으면 자동 추정 띠로 시작)
     bands, est_t = wall_bands(plan)
-    edit_walls = my_walls if my_walls is not None else L.walls_from_bands(bands)
     pts = grid[["local_x", "local_y"]].round(3).to_numpy().tolist()
     faces = [[round(float(v), 3) for v in (*ln[0], *ln[-1])] for ln in walls]
+    edit_walls = my_walls if my_walls is not None else L.walls_from_bands(bands)
+    if not any(float(w.get("t", 0.2)) == 0 for w in edit_walls):  # 선(스캔된 벽 면)도 같은 목록에서 고친다
+        edit_walls = edit_walls + L.lines_from_faces(faces)
     tab_w, tab_r = st.tabs(["벽 고치기", "방 정하기"])
 
     with tab_w:
         with st.container(horizontal=True, vertical_alignment="center"):
-            st.caption("벽(회색)은 처음엔 스캔에서 추정한 벽이에요. 기본 도면과 다르면 여기서 고치세요 — 고친 벽이 이 구조의 모든 층 도면에 들어가요."
+            st.caption("벽(회색 띠)과 선(검은 가는 선 = 스캔된 벽 면)은 처음엔 스캔에서 추정한 거예요. 기본 도면과 다르면 여기서 고치세요 — 고친 벽이 이 구조의 모든 층 도면에 들어가요."
                        + (" **지금은 고친 벽을 쓰고 있어요.**" if my_walls is not None else " 지금은 자동 추정 벽이에요."))
             if my_walls is not None and st.button("자동 추정 벽으로 되돌리기", icon=":material/restart_alt:", key="walls_reset",
                                                   help="고친 벽을 지우고 스캔에서 추정한 벽으로 돌아가요."):
@@ -181,7 +183,7 @@ with st.container(border=True):
                 _save()
                 ss.rooms_v = ss.get("rooms_v", 0) + 1
                 st.rerun()
-        wsaved = wall_editor(key=f"walls_editor_{lay}", faces=faces, points=pts, walls=edit_walls, fit_key=f"{lay}/{base}",
+        wsaved = wall_editor(key=f"walls_editor_{lay}", faces=[], points=pts, walls=edit_walls, fit_key=f"{lay}/{base}",
                              default_t=est_t)
         if wsaved and wsaved.get("walls") is not None:
             data["walls"][lay] = [{"k": w.get("k", "line"), "a": [round(float(v), 3) for v in w["a"]],
@@ -191,15 +193,20 @@ with st.container(border=True):
             _save()
             ss.rooms_v = ss.get("rooms_v", 0) + 1
             st.rerun()
-        st.caption("검은 가는 선 = 스캔에서 찾은 실제 벽 면 (기준) · 회색 = 벽 · 회색 점 = 격자점. 「／ 직선 벽」: 시작점 클릭 → 끝점 클릭 "
-                   "(이어서 다음 벽, Esc 로 끝). 그리는 중 **숫자를 치고 Enter** 면 그 길이(mm)로 그려요. 「◠ 곡선 벽」: 시작점 → 끝점 → 휘는 정도 클릭. "
+        st.caption("회색 띠 = 벽 · 검은 가는 선 = 선(스캔된 벽 면, 이것도 고르기·옮기기·지우기 돼요) · 회색 점 = 격자점. "
+                   "「／ 직선 벽」·「─ 선」: 시작점 클릭 → 끝점 클릭 (하나 그리면 고르기로 돌아가요). "
+                   "**벽·선을 고르고 숫자를 친 뒤 Enter** 면 마우스에 가까운 끝 쪽으로 그만큼(mm) 늘어나요 (앞에 - 를 치면 줄어요). 그리는 중 **숫자를 치고 Enter** 면 그 길이(mm)로 그려요. 「◠ 곡선 벽」: 시작점 → 끝점 → 휘는 정도 클릭. "
                    "벽을 클릭해 고르면 끌어서 옮기고, 끝점(□)을 끌어 길이·방향을, 곡선은 ◇ 로 휘는 정도를 바꿔요. 끝점은 다른 벽 끝에 붙고 "
                    "수평·수직은 딱 맞춰져요 (Shift 를 누르면 자유롭게). 오른쪽 위 칸에서 고른 벽의 **두께·길이(mm)** 를 입력해요. "
                    "다 고쳤으면 **저장**.")
 
-    if my_walls is not None:  # 방 경계는 고친 벽의 면에 붙인다
+    if my_walls is not None:  # 방 경계는 고친 벽·선의 면에 붙이고, 그림의 검은 선도 고친 선으로
         fx, fy = L.wall_faces(my_walls)
-        wx, wy = np.concatenate([wx, fx]), np.concatenate([wy, fy])
+        if any(float(w.get("t", 0.2)) == 0 for w in my_walls):
+            wx, wy = fx, fy
+            faces = [[round(float(v), 3) for v in (*ln[0], *ln[-1])] for ln in edited_lines(my_walls)]
+        else:
+            wx, wy = np.concatenate([wx, fx]), np.concatenate([wy, fy])
     wall_polys = [p.round(3).tolist() for p in wall_shapes(plan, my_walls)]
     with tab_r:
         saved = room_editor(

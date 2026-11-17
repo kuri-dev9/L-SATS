@@ -523,6 +523,12 @@ def walls_from_bands(bands: list) -> list[dict]:
     return out
 
 
+def lines_from_faces(faces: list) -> list[dict]:
+    """스캔에서 찾은 벽 면 선 [x0, y0, x1, y1] → 편집용 선 {k: line, a, b, t: 0} (두께 없는 벽)."""
+    return [{"k": "line", "a": [round(float(f[0]), 3), round(float(f[1]), 3)],
+             "b": [round(float(f[2]), 3), round(float(f[3]), 3)], "t": 0.0} for f in faces]
+
+
 def _arc(w: dict):
     a, m, b = (np.asarray(w[k], float) for k in ("a", "m", "b"))
     d = 2 * (a[0] * (m[1] - b[1]) + m[0] * (b[1] - a[1]) + b[0] * (a[1] - m[1]))
@@ -562,7 +568,7 @@ def wall_faces(walls: list[dict]) -> tuple[np.ndarray, np.ndarray]:
     for w in walls or []:
         if w.get("k") == "arc":
             continue
-        (ax, ay), (bx, by), t = w["a"], w["b"], float(w.get("t", 0.2)) / 2
+        (ax, ay), (bx, by), t = w["a"], w["b"], float(w.get("t", 0.2)) / 2  # 선(t = 0)은 그 자리 하나
         if abs(ay - by) < 1e-6:
             ys += [ay - t, ay + t]
         elif abs(ax - bx) < 1e-6:

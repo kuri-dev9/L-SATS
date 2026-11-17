@@ -3,7 +3,9 @@
 벽 하나 = {k: "line" | "arc", a: [x, y], b: [x, y], m: [x, y](곡선의 가운데 점), t: 두께} (건물 축 m).
 - 고르기: 벽 클릭 → 끌면 통째로 이동, 끝점(□)을 끌면 그 끝만, 곡선은 가운데 점(◇)을 끌면 휘는 정도.
   끝점은 다른 벽 끝에 붙고(SNAP_PX), 직선은 수평·수직 근처(ORTHO_DEG)면 딱 맞춘다 (Shift 를 누르면 자유롭게).
-- 직선 벽: 시작점 클릭 → 끝점 클릭 (이어서 다음 벽, Esc 로 끝). 그리는 중 숫자를 치고 Enter = 그 길이(mm)로.
+- 직선 벽: 시작점 클릭 → 끝점 클릭 (하나 그리면 고르기로 돌아가 방금 그린 벽이 골라진다). 그리는 중 숫자+Enter = 그 길이(mm)로.
+- 선(t = 0): 스캔에서 찾은 벽 면 선도 같은 목록에 두께 0 으로 들어 있어 고르기·옮기기·지우기가 되고, 「─ 선」으로 새로 그린다.
+- 고른 직선 + 숫자 + Enter = 마우스에 가까운 끝 쪽으로 그만큼(mm) 늘이기 (앞에 - 를 치면 줄이기).
 - 곡선 벽: 시작점 → 끝점 → 휘는 정도 클릭.
 - 오른쪽 위 칸: 고른 벽의 두께·길이(mm)를 바로 입력 (두께는 새 벽의 기본값도 된다).
 - Delete = 지우기, Ctrl+Z = 되돌리기, 오른쪽 버튼·Space+끌기 = 화면 이동, 휠 = 확대.
@@ -23,6 +25,7 @@ HTML = """
     <button data-t="select" class="on" title="벽 고르기·옮기기 (Esc)">↖ 고르기</button>
     <button data-t="line" title="직선 벽: 시작점 클릭 → 끝점 클릭. 그리는 중 숫자+Enter = 길이(mm)">／ 직선 벽</button>
     <button data-t="arc" title="곡선 벽: 시작점 → 끝점 → 휘는 정도 클릭">◠ 곡선 벽</button>
+    <button data-t="seg" title="선(두께 없는 벽 면 선): 시작점 클릭 → 끝점 클릭. 그리는 중 숫자+Enter = 길이(mm)">─ 선</button>
     <button data-a="del" title="고른 벽 지우기 (Delete)">지우기</button>
     <button data-a="undo" title="되돌리기 (Ctrl+Z)">↶ 되돌리기</button>
     <button data-a="fit" title="전체 보기">전체 보기</button>
@@ -34,7 +37,7 @@ HTML = """
     <label>길이 <input data-f="len" type="number" min="10" step="10"> mm</label>
   </div>
   <div class="status"></div>
-  <div class="help">벽 클릭 = 고르기 · 끌기 = 이동 · □ 끝점 끌기 = 길이·방향 (다른 벽 끝에 붙고 수평·수직은 딱 맞춤, Shift = 자유) · ◇ = 곡선 휘기 · 그리는 중 숫자+Enter = 길이(mm) · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
+  <div class="help">벽·선 클릭 = 고르기 · 고른 뒤 숫자+Enter = 그만큼 늘이기(- 줄이기) · 끌기 = 이동 · □ 끝점 끌기 = 길이·방향 (다른 벽 끝에 붙고 수평·수직은 딱 맞춤, Shift = 자유) · ◇ = 곡선 휘기 · 그리는 중 숫자+Enter = 길이(mm) · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
 </div>
 """
 
@@ -171,7 +174,7 @@ function make(root) {
 
   // ---- 그리기
   function strokeWall(w, style, extra = 0) {
-    ctx.strokeStyle = style; ctx.lineWidth = Math.max(2, w.t * S.z) + extra; ctx.lineCap = 'butt'
+    ctx.strokeStyle = style; ctx.lineWidth = (w.t > 0 ? Math.max(2, w.t * S.z) : 1.4) + extra; ctx.lineCap = 'butt'
     ctx.beginPath()
     if (w.k === 'arc' && arcInfo(w)) {
       const A = arcInfo(w), [cx, cy] = toS(...A.c)
@@ -182,12 +185,12 @@ function make(root) {
   function draw() {
     if (!S.d || !S.W) return
     ctx.clearRect(0, 0, S.W, S.H)
-    ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 1; ctx.beginPath()  // 스캔된 벽 면 (기준)
-    for (const f of S.d.faces) { ctx.moveTo(...toS(f[0], f[1])); ctx.lineTo(...toS(f[2], f[3])) }
-    ctx.stroke()
     ctx.fillStyle = '#cbd5e1'
     for (const p of S.d.pts) { const [x, y] = toS(...p); ctx.beginPath(); ctx.arc(x, y, 2.5, 0, 6.3); ctx.fill() }
-    S.walls.forEach((w, i) => { if (i === S.sel) strokeWall(w, 'rgba(234,88,12,0.9)', 4); strokeWall(w, i === S.sel ? 'rgba(251,146,60,0.65)' : 'rgba(100,116,139,0.6)') })
+    S.walls.forEach((w, i) => {  // 벽(두께 있음)은 회색 띠, 선(두께 0)은 검은 가는 선
+      if (i === S.sel) strokeWall(w, 'rgba(234,88,12,0.9)', w.t > 0 ? 4 : 3)
+      strokeWall(w, i === S.sel ? (w.t > 0 ? 'rgba(251,146,60,0.65)' : '#ea580c') : (w.t > 0 ? 'rgba(100,116,139,0.6)' : '#0f172a'))
+    })
     if (S.sel >= 0) {  // 손잡이
       const w = S.walls[S.sel]
       ctx.fillStyle = '#fff'; ctx.strokeStyle = '#ea580c'; ctx.lineWidth = 1.5
@@ -198,7 +201,7 @@ function make(root) {
       ctx.fillText(`${Math.round(wallLen(w) * 1000)} mm · 두께 ${Math.round(w.t * 1000)}`, mx, my - 12)
     }
     if (S.draft) {  // 그리는 중
-      const d = S.draft, w = { k: d.k, a: d.a, b: d.b || S.mouseW, m: d.m || d.b, t: S.defT }
+      const d = S.draft, w = { k: d.k === 'seg' ? 'line' : d.k, a: d.a, b: d.b || S.mouseW, m: d.m || d.b, t: d.k === 'seg' ? 0 : S.defT }
       if (d.k === 'arc' && d.b && !d.m) w.m = S.mouseW
       if (d.k === 'arc' && !d.b) w.k = 'line'
       ctx.setLineDash([6, 4]); strokeWall(w, 'rgba(22,163,74,0.5)'); ctx.setLineDash([])
@@ -206,10 +209,11 @@ function make(root) {
       ctx.fillStyle = '#166534'; ctx.font = '700 12px sans-serif'; ctx.textAlign = 'left'
       ctx.fillText(`${Math.round(Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]) * 1000)} mm`, mx + 10, my - 10)
     }
-    const tool = { select: '고르기', line: '직선 벽', arc: '곡선 벽' }[S.tool]
+    const tool = { select: '고르기', line: '직선 벽', arc: '곡선 벽', seg: '선' }[S.tool]
     const step = S.draft ? (S.draft.k === 'arc' ? (S.draft.b ? '휘는 정도를 클릭하세요' : '끝점을 클릭하세요') : '끝점을 클릭하거나 길이(mm)를 치고 Enter · Esc = 끝')
-                         : S.tool === 'select' ? (S.sel >= 0 ? `벽 ${S.sel + 1} 고름` : '벽을 클릭해 고르세요') : '시작점을 클릭하세요'
-    status.textContent = `${tool}: ${step}` + (S.typed ? ` · 입력한 길이 ${S.typed} mm` : '') +
+                         : S.tool === 'select' ? (S.sel >= 0 ? `${S.walls[S.sel].t > 0 ? '벽' : '선'} 고름 — 숫자를 치고 Enter = 마우스 쪽 끝으로 그만큼 늘이기(- 는 줄이기)` : '벽·선을 클릭해 고르세요') : '시작점을 클릭하세요'
+    const typedMsg = S.typed ? (S.draft ? ` · 입력한 길이 ${S.typed} mm (Enter)` : ` · ${S.typed} mm ${S.typed.startsWith('-') ? '줄이기' : '늘이기'} (Enter, Esc = 취소)`) : ''
+    status.textContent = `${tool}: ${step}` + typedMsg +
                          ` · 벽 ${S.walls.length}개` + (S.dirty ? ' · 저장 안 한 변경이 있어요' : '')
     saveBtn.classList.toggle('dirty', S.dirty)
     root.querySelectorAll('[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === S.tool))
@@ -241,10 +245,10 @@ function make(root) {
       if (!d.b) {
         const b = P(snapPoint(w, d.a, e.shiftKey))
         if (Math.hypot(b[0] - d.a[0], b[1] - d.a[1]) < 0.05) return
-        if (d.k === 'line') { addWall({ k: 'line', a: d.a, b, t: S.defT }); S.draft = { k: 'line', a: b }; S.typed = ''; draw(); return }
+        if (d.k !== 'arc') { finishStraight(d.a, b); return }
         d.b = b; draw(); return
       }
-      addWall({ k: 'arc', a: d.a, b: d.b, m: P(w), t: S.defT }); S.draft = null; draw(); return
+      addWall({ k: 'arc', a: d.a, b: d.b, m: P(w), t: S.defT }); S.draft = null; S.tool = 'select'; draw(); return
     }
     const h = handleAt(sx, sy)
     if (h) { pushUndo(); S.drag = { t: 'handle', h, o: copy(S.walls[S.sel]), moved: false }; return }
@@ -293,6 +297,18 @@ function make(root) {
     draw()
   }, { passive: false })
 
+  function finishStraight(a, b) {  // 직선 벽·선 하나를 넣고 고르기로 돌아간다 (방금 그린 것을 고른 채)
+    addWall({ k: 'line', a, b, t: S.draft && S.draft.k === 'seg' ? 0 : S.defT })
+    S.draft = null; S.typed = ''; S.tool = 'select'; draw()
+  }
+  function extendSel(mm) {  // 고른 직선을 마우스에 가까운 끝 쪽으로 mm 만큼 늘인다 (음수 = 줄임)
+    const w = S.walls[S.sel]
+    if (!w || w.k === 'arc') { window.alert('곡선 벽은 길이를 숫자로 바꿀 수 없어요. 끝점(□)을 끌어 주세요.'); return }
+    const m = S.mouseW || w.b, end = Math.hypot(m[0] - w.a[0], m[1] - w.a[1]) < Math.hypot(m[0] - w.b[0], m[1] - w.b[1]) ? 'a' : 'b'
+    const o = end === 'a' ? w.b : w.a, p = w[end], L = Math.hypot(p[0] - o[0], p[1] - o[1]) || 1, nl = L + mm / 1000
+    if (nl < 0.05) { window.alert('그만큼 줄이면 벽이 없어져요.'); return }
+    pushUndo(); w[end] = P([o[0] + (p[0] - o[0]) / L * nl, o[1] + (p[1] - o[1]) / L * nl]); changed()
+  }
   function addWall(w) { pushUndo(); S.walls.push(w); S.sel = S.walls.length - 1; changed() }
   function del() { if (S.sel < 0) return; pushUndo(); S.walls.splice(S.sel, 1); S.sel = -1; changed() }
   function undo() { if (S.undo.length) { S.walls = S.undo.pop(); S.sel = -1; S.dirty = true; draw() } }
@@ -300,17 +316,24 @@ function make(root) {
   root.addEventListener('keydown', e => {
     if (e.target === tIn || e.target === lenIn) return
     if (e.code === 'Space') { space = true; e.preventDefault(); return }
-    if (S.draft && !S.draft.b && /^[0-9]$/.test(e.key)) { S.typed += e.key; e.preventDefault(); draw(); return }
-    if (S.draft && S.typed && e.key === 'Backspace') { S.typed = S.typed.slice(0, -1); e.preventDefault(); draw(); return }
+    const typing = (S.draft && !S.draft.b) || (S.tool === 'select' && S.sel >= 0)
+    if (typing && (/^[0-9]$/.test(e.key) || (e.key === '-' && !S.typed && !S.draft))) { S.typed += e.key; e.preventDefault(); draw(); return }
+    if (S.typed && e.key === 'Backspace') { S.typed = S.typed.slice(0, -1); e.preventDefault(); draw(); return }
+    if (!S.draft && S.sel >= 0 && S.typed && e.key === 'Enter') {  // 고른 벽 + 숫자 + Enter = 그만큼 늘이기
+      e.preventDefault(); const v = Number(S.typed); S.typed = ''
+      if (v) extendSel(v); else draw()
+      return
+    }
     if (S.draft && !S.draft.b && S.typed && e.key === 'Enter') {  // 길이 입력: 마우스 쪽 방향으로 그 길이만큼
       e.preventDefault()
       const a = S.draft.a, m = S.mouseW || [a[0] + 1, a[1]], L = Math.hypot(m[0] - a[0], m[1] - a[1]) || 1
       const len = Number(S.typed) / 1000, b = P([a[0] + (m[0] - a[0]) / L * len, a[1] + (m[1] - a[1]) / L * len])
       S.typed = ''
-      if (S.draft.k === 'line') { addWall({ k: 'line', a, b, t: S.defT }); S.draft = { k: 'line', a: b } } else S.draft.b = b
+      if (S.draft.k !== 'arc') { finishStraight(a, b); return }
+      S.draft.b = b
       draw(); return
     }
-    if (e.key === 'Escape') { if (S.draft) { S.draft = null; S.typed = '' } else { S.tool = 'select'; S.sel = -1 } draw(); return }
+    if (e.key === 'Escape') { if (S.typed) S.typed = ''; else if (S.draft) S.draft = null; else { S.tool = 'select'; S.sel = -1 } draw(); return }
     if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel >= 0) { e.preventDefault(); del(); return }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo() }
   })

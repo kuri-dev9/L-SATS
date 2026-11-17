@@ -107,11 +107,9 @@ def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None 
     msp = doc.modelspace()
     mm = 1000.0
 
-    if plan:
-        for layer, lines in plan_lines(plan).items():
-            for ln in lines:
-                msp.add_lwpolyline((ln * mm).tolist(), close=bool(np.allclose(ln[0], ln[-1])),
-                                   dxfattribs={"layer": layer})
+    lines = edited_lines(walls) if walls is not None else (plan_lines(plan)["벽선"] if plan else [])
+    for ln in lines:  # 열린 선 (닫힌 선은 두께 분석이 방으로 읽을 수 있어 열어 둔다)
+        msp.add_lwpolyline((ln * mm).tolist(), close=False, dxfattribs={"layer": "벽선"})
 
     s_mm = float(df["grid_spacing_m"].iloc[0]) * mm if len(df) and "grid_spacing_m" in df else 1500.0
     th = s_mm * 0.08  # 글자 높이 (격자 간격에 맞춤)
@@ -157,8 +155,25 @@ def wall_shapes(plan: dict | None, walls: list[dict] | None = None) -> list[np.n
     if walls is not None:
         from .las_layout import wall_polygon
 
-        return [wall_polygon(w) for w in walls]
+        return [wall_polygon(w) for w in walls if float(w.get("t", 0.2)) > 0]
     return [np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) for x0, x1, y0, y1 in (wall_bands(plan)[0] if plan else [])]
+
+
+def edited_lines(walls: list[dict]) -> list[np.ndarray]:
+    """고친 벽 목록 중 선(두께 0)들 → [두 점 또는 곡선 점들] (건물 축 m)."""
+    from .las_layout import _arc
+
+    out = []
+    for w in walls or []:
+        if float(w.get("t", 0.2)) > 0:
+            continue
+        if w.get("k") == "arc" and w.get("m") is not None and (A := _arc(w)) is not None:
+            c, r, sa, span = A
+            th = sa + span * np.linspace(0, 1, 25)
+            out.append(np.column_stack([c[0] + r * np.cos(th), c[1] + r * np.sin(th)]))
+        else:
+            out.append(np.array([w["a"], w["b"]], float))
+    return out
 
 
 def plan_figure(dxf_bytes: bytes, df: pd.DataFrame, plan: dict | None = None, walls: list[dict] | None = None):
@@ -178,17 +193,21 @@ def plan_figure(dxf_bytes: bytes, df: pd.DataFrame, plan: dict | None = None, wa
         name = "벽 (방 배치에서 고친 벽)" if walls is not None else f"벽 (추정, 두께 약 {wall_bands(plan)[1] * 1000:.0f} mm)"
         fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", fill="toself", fillcolor="rgba(148,163,184,0.55)",
                                  line=dict(width=0), name=name, hoverinfo="skip"))
-    style = {"벽선": dict(color="#334155", width=1.2)}
-    for layer, line in style.items():
-        xs, ys = [], []
-        for e in doc.modelspace().query(f'LWPOLYLINE[layer=="{layer}"]'):
+    xs, ys = [], []
+    if walls is not None:  # 방 배치에서 고친 선
+        for ln in edited_lines(walls):
+            xs += list(ln[:, 0]) + [None]
+            ys += list(ln[:, 1]) + [None]
+    else:
+        for e in doc.modelspace().query('LWPOLYLINE[layer=="벽선"]'):
             pts = [(x / 1000, y / 1000) for x, y, *_ in e.get_points()]
             if e.closed and pts:
                 pts.append(pts[0])
             xs += [p[0] for p in pts] + [None]
             ys += [p[1] for p in pts] + [None]
-        if xs:
-            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=line, name=layer, hoverinfo="skip"))
+    if xs:
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#334155", width=1.2), name="벽선",
+                                 hoverinfo="skip"))
 
     def fmt(v, f):
         return "-" if pd.isna(v) else f.format(v)
