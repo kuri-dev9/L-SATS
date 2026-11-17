@@ -2,8 +2,9 @@
 
 - 방 클릭 = 선택 / 선택한 방 안을 끌기 = 방 이동 / 선택한 방의 변을 끌기 = 그 경계만 이동 (가로 변은 위아래, 세로 변은 좌우)
 - 옮길 때 가까운 벽 면(스캔에서 찾은 선)에 붙는다 (SNAP_PX 화면 픽셀 또는 0.15 m 안)
-- 「새 방 그리기」(또는 Shift+끌기)로 빈 곳에 직사각형 방, 더블클릭 = 이름 바꾸기, Delete = 지우기, Ctrl+Z = 되돌리기
-- 빈 곳 끌기 = 화면 이동, 휠 = 확대·축소
+- 빈 곳 끌기 = 새 방(직사각형), 「방 위에 새 방 그리기」(또는 Shift+끌기)면 이미 있는 방 위에도 그린다
+- 더블클릭 = 이름 바꾸기, Delete = 지우기, Ctrl+Z = 되돌리기, 오른쪽 버튼·Space+끌기 = 화면 이동, 휠 = 확대·축소
+- 새로 그리거나 마지막으로 고친 방을 목록 맨 뒤로 보내고, 저장할 때 겹친 칸은 뒤쪽 방이 갖는다 (las_layout.resolve_overlaps)
 편집은 브라우저 안에서만 하고 「저장」을 누를 때만 Python 으로 보낸다 (누를 때마다 보내면 화면 전체가 다시 실행되며 깜빡임).
 """
 from __future__ import annotations
@@ -17,7 +18,7 @@ HTML = """
 <div class="re" tabindex="0">
   <canvas></canvas>
   <div class="bar">
-    <button data-a="draw" title="빈 곳을 끌어 새 방을 그려요 (Shift+끌기도 돼요)">＋ 새 방 그리기</button>
+    <button data-a="draw" title="켜면 이미 있는 방 위에도 새 방을 그릴 수 있어요 (Shift+끌기도 돼요). 겹친 부분은 새 방 쪽으로 정리돼요">＋ 방 위에 새 방 그리기</button>
     <button data-a="rename" title="선택한 방 이름 바꾸기 (방 더블클릭도 돼요)">이름 바꾸기</button>
     <button data-a="del" title="선택한 방 지우기 (Delete 키)">방 지우기</button>
     <button data-a="undo" title="되돌리기 (Ctrl+Z)">↶ 되돌리기</button>
@@ -26,7 +27,7 @@ HTML = """
     <button data-a="save" class="save" title="바꾼 방을 저장해요">저장</button>
   </div>
   <div class="status"></div>
-  <div class="help">방 클릭 = 선택 · 방 안 끌기 = 이동 · 변 끌기 = 경계 이동 (벽에 붙어요) · 빈 곳 끌기 = 화면 이동 · 휠 = 확대</div>
+  <div class="help">빈 곳 끌기 = 새 방 · 방 클릭 = 선택 · 방 안 끌기 = 이동 · 변 끌기 = 경계 이동 (벽에 붙어요) · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
 </div>
 """
 
@@ -200,7 +201,7 @@ function make(root) {
       ctx.setLineDash([])
     }
     const sel = S.sel >= 0 ? `선택: ${S.rooms[S.sel].name} (${area(S.rooms[S.sel].poly).toFixed(1)}㎡)` : '방을 클릭해 고르세요'
-    status.textContent = (S.draw ? '새 방 그리기: 빈 곳을 끌어 범위를 정하세요 · ' : '') + sel +
+    status.textContent = (S.draw ? '새 방 그리기: 끌어서 범위를 정하세요 (방 위에도 돼요) · ' : '') + sel +
                          (S.dirty ? ' · 저장 안 한 변경이 있어요' : '')
     saveBtn.classList.toggle('dirty', S.dirty)
     drawBtn.classList.toggle('on', S.draw)
@@ -226,11 +227,15 @@ function make(root) {
   }
 
   const pos = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] }
+  let space = false
+  root.addEventListener('keydown', e => { if (e.code === 'Space') { space = true; e.preventDefault() } })
+  root.addEventListener('keyup', e => { if (e.code === 'Space') space = false })
+  cv.addEventListener('contextmenu', e => e.preventDefault())
   cv.addEventListener('pointerdown', e => {
-    if (e.button !== 0) return
     root.focus()
     cv.setPointerCapture(e.pointerId)
     const [sx, sy] = pos(e), w = toW(sx, sy)
+    if (e.button !== 0 || space) { S.drag = { t: 'pan', s: [sx, sy], c: [...S.c] }; return }  // 오른쪽·가운데 버튼, Space+끌기 = 화면 이동
     if (S.draw || e.shiftKey) { S.drag = { t: 'new', a: w, b: w }; return }
     const ei = edgeAt(sx, sy)
     if (ei >= 0) { pushUndo(); S.drag = { t: 'edge', i: ei, s: w, o: copy(S.rooms[S.sel].poly), moved: false }; return }
@@ -238,9 +243,9 @@ function make(root) {
     if (k >= 0) {
       S.sel = k; pushUndo()
       S.drag = { t: 'move', s: w, o: copy(S.rooms[k].poly), moved: false }
-    } else {
+    } else {  // 빈 곳 끌기 = 새 방
       S.sel = -1
-      S.drag = { t: 'pan', s: [sx, sy], c: [...S.c] }
+      S.drag = { t: 'new', a: w, b: w }
     }
     draw()
   })
@@ -249,7 +254,7 @@ function make(root) {
     if (!d) {
       S.hoverEdge = edgeAt(sx, sy)
       if (S.hoverEdge >= 0) cv.style.cursor = horiz(S.rooms[S.sel].poly, S.hoverEdge) ? 'ns-resize' : 'ew-resize'
-      else cv.style.cursor = S.draw ? 'crosshair' : roomAt(...w) >= 0 ? 'move' : 'grab'
+      else cv.style.cursor = space ? 'grab' : S.draw ? 'crosshair' : roomAt(...w) >= 0 ? 'move' : 'crosshair'
       draw(); return
     }
     if (d.t === 'pan') { S.c = [d.c[0] - (sx - d.s[0]) / S.z, d.c[1] + (sy - d.s[1]) / S.z]; draw(); return }
@@ -279,12 +284,16 @@ function make(root) {
         if (name && name.trim()) {
           pushUndo()
           S.rooms.push({ name: name.trim(), poly: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(p => p.map(r3)) })
-          S.sel = S.rooms.length - 1; S.draw = false; changed(); return
+          S.sel = S.rooms.length - 1; S.draw = false; changed(); return  // 맨 뒤 = 겹치면 이 방이 우선
         }
       }
       draw(); return
     }
-    if (d.t === 'move' || d.t === 'edge') { if (d.moved) changed(); else { S.undo.pop(); draw() } }
+    if (d.t === 'move' || d.t === 'edge') {
+      if (!d.moved) { S.undo.pop(); draw(); return }
+      const [r] = S.rooms.splice(S.sel, 1); S.rooms.push(r); S.sel = S.rooms.length - 1  // 마지막에 고친 방이 겹침에서 우선
+      changed()
+    }
   })
   cv.addEventListener('dblclick', e => { const [sx, sy] = pos(e); const k = roomAt(...toW(sx, sy)); if (k >= 0) { S.sel = k; rename(k) } })
   cv.addEventListener('wheel', e => {

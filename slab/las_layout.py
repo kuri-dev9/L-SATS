@@ -328,3 +328,31 @@ def overlaps(plan: dict, rooms: list[dict]) -> list[tuple[str, str, float]]:
             if m2 >= 0.05:
                 out.append((rooms[i]["name"], rooms[j]["name"], m2))
     return out
+
+
+def resolve_overlaps(plan: dict, rooms: list[dict]) -> list[dict]:
+    """겹친 칸은 목록 뒤쪽 방(새로 그리거나 마지막에 고친 방)이 갖는다. 앞쪽 방은 겹친 만큼 깎아 다시 그리고,
+    다 덮였으면 뺀다. 겹치지 않은 방은 좌표를 그대로 둔다."""
+    from scipy import ndimage
+
+    if len(rooms) < 2:
+        return rooms
+    # 깎인 변은 벽이 아니라 이긴 방의 변에 맞춘다 (벽에 붙이면 두 방 사이에 빈 띠가 생긴다)
+    pts = np.vstack([room_poly(r) for r in rooms])
+    xs, ys = np.unique(pts[:, 0]), np.unique(pts[:, 1])
+    masks = [rooms_mask(plan, [r]) > 0 for r in rooms]
+    taken = np.zeros(plan["wall"].shape, bool)
+    out = []
+    for r, m in zip(reversed(rooms), reversed(masks)):
+        own = m & ~taken
+        if not (m & taken).any():
+            out.append(r)
+        elif own.sum() * plan["res"] ** 2 >= 0.3:
+            lab, n = ndimage.label(own)
+            if n > 1:
+                own = lab == (np.argmax(np.bincount(lab.ravel())[1:]) + 1)
+            poly = _trace(own, plan, xs, ys)
+            if poly is not None:
+                out.append({"name": r["name"], "poly": poly.tolist()})
+        taken |= m
+    return out[::-1]

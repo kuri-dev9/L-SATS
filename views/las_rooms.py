@@ -168,15 +168,16 @@ with st.container(border=True):
         walls=[[round(float(v), 3) for v in (*ln[0], *ln[-1])] for ln in walls], wall_x=wx, wall_y=wy,
         points=grid[["local_x", "local_y"]].round(3).to_numpy().tolist())
     if saved and saved.get("rooms") is not None:
-        data["layouts"][lay] = [{"name": str(r["name"]).strip(), "poly": [[round(float(x), 3), round(float(y), 3)]
-                                                                       for x, y in r["poly"]]}
-                                for r in saved["rooms"] if str(r.get("name", "")).strip() and len(r["poly"]) >= 3]
+        new = [{"name": str(r["name"]).strip(), "poly": [[round(float(x), 3), round(float(y), 3)] for x, y in r["poly"]]}
+               for r in saved["rooms"] if str(r.get("name", "")).strip() and len(r["poly"]) >= 3]
+        data["layouts"][lay] = L.resolve_overlaps(plan, new)  # 겹친 칸은 새로 그리거나 마지막에 고친 방 쪽으로
         _save()
         ss.rooms_v = ss.get("rooms_v", 0) + 1
         st.rerun()
     st.caption("검은 선 = 스캔에서 찾은 실제 벽 면 (기준선, 고칠 수 없음) · 파란 영역 = 내가 정한 방 (이 범위·이름이 도면에 들어가요) · "
-               "회색 점 = 격자점 (두께를 재는 자리). **방을 클릭**하면 주황색으로 골라지고, 방 안을 끌면 방이 통째로, "
-               "**변을 끌면 그 경계만** 움직여요. 벽 가까이 가면 벽에 붙어요. 다 고쳤으면 그림 오른쪽 위 **저장**을 누르세요.")
+               "회색 점 = 격자점 (두께를 재는 자리). **빈 곳을 끌면 새 방**, **방을 클릭**하면 주황색으로 골라지고 방 안을 끌면 통째로, "
+               "**변을 끌면 그 경계만** 움직여요. 벽 가까이 가면 벽에 붙어요. 이미 있는 방 위에 새 방을 그리려면 「방 위에 새 방 그리기」를 "
+               "켜세요 — 저장할 때 겹친 부분은 새 방 쪽으로 정리돼요. 다 고쳤으면 그림 오른쪽 위 **저장**을 누르세요.")
     overlap = L.overlaps(plan, rooms)
     if overlap:
         st.warning("겹치는 방이 있어요 (겹친 곳의 격자점은 한 방에만 들어가요): "
