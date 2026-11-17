@@ -2,13 +2,17 @@
 
 결과는 두께 분석에 그대로 쓰는 grid_analysis_floor_level_<층>.csv 형식이다. 원본이 1GB 넘어도 조금씩 나눠 읽는다.
 
-1) 층마다 한 번 훑기: 높이 분포에서 바닥면·천장면 높이(가장 많이 몰린 두 수평면)를 찾고,
+1) 층마다 한 번 훑기(표본): 파일 전체에 고르게 흩어진 일부(5 %, 최소 1000만 점)만 건너뛰며 읽어 높이 분포에서 바닥면·천장면 높이(가장 많이 몰린 두 수평면)를 찾고,
    벽 높이의 점으로 건물 축 방향(측량 좌표에서 기울어진 각도)을 찾는다.
 2) 격자 정하기: 모든 층에 같은 격자(건물 축 방향, 간격 1.5 m 기본)를 놓는다. 격자 정의는 grid.json 에 저장해
    다음에 다른 층을 변환해도 같은 격자를 쓴다 (매층 고정).
 3) 층마다 다시 훑기: 격자점마다 가로·세로 window 안의 점 중 바닥면 근처(±band) 점이 가장 많이 몰린 높이를 바닥 Z,
    천장면 근처에서 같은 방법으로 천장 Z 로 한다 (벽·가구의 세로 점에 덜 끌려간다). 바닥 위 물건·천장 설비가 섞이면 기준면 편차(floor_error 등)가 커져
    두께 분석에서 'Z값 확인 필요'로 걸러진다.
+
+3)과 같이 읽으면서 바닥에서 1.0~1.5 m 높이의 점(벽 단면)과 바닥면 점을 5 cm 칸에 쌓아, 층마다 DXF 평면도
+(벽선·외곽선·격자점과 높이, 건물 축 기준 mm)를 만든다 (slab/las_plan.py).
+LAZ 는 laspy 가 압축 풀기를 여러 코어로 한다 (LazrsParallel). 디스크 읽기가 병목이라 따로 병렬 처리는 하지 않는다.
 
 결과 CSV 에는 격자 정의(grid_angle_deg, grid_origin_x/y)를 함께 넣어, 두께 분석이 도면 없이도 건물 축에 맞춰
 정렬해 그린다 (측량 좌표는 기울어져 있으므로).
@@ -30,9 +34,14 @@ LAS_TYPES = (".las", ".laz")
 GRID_FILE = "grid.json"
 OUT_DIR = "LSATS_grid"
 CSV_NAME = "grid_analysis_floor_level_{}.csv"
+DXF_NAME = "LAS_평면도_{}.dxf"
 NOISE_CLASSES = (7, 18)  # LAS 분류의 잡음 점
 CHUNK = 2_000_000
 SAMPLE_MAX = 400_000  # 1차 훑기에서 벽 방향을 찾을 때 쓰는 최대 점 수
+SCAN_FRAC, SCAN_MIN, SCAN_SLICES = 0.05, 10_000_000, 400  # 1차 훑기 표본: 전체의 5 %(최소 1000만 점)를 400 군데에서
+PLAN_RES = 0.05  # 평면도 칸 크기 (m)
+PLAN_MAX_CELLS = 30_000_000  # 평면도 칸 수 상한 (넘으면 칸을 키운다)
+WALL_Z = (1.0, 1.5)  # 벽 단면으로 볼 높이 (바닥면 기준, m)
 
 
 @dataclass
@@ -127,12 +136,32 @@ def las_info(path: Path) -> dict:
                 "z": (float(h.mins[2]), float(h.maxs[2])), "scale": tuple(float(v) for v in h.scales)}
 
 
-def iter_points(path: Path, chunk: int = CHUNK):
-    """(x, y, z) m 배열을 조금씩. 잡음 분류(7, 18) 점은 뺀다."""
+def scan_count(n_points: int) -> int:
+    """1차 훑기에서 읽을 점 수 (작은 파일은 전부)."""
+    return min(n_points, max(SCAN_MIN, int(n_points * SCAN_FRAC)))
+
+
+def iter_points(path: Path, chunk: int = CHUNK, sample: bool = False):
+    """(x, y, z) m 배열을 조금씩. 잡음 분류(7, 18) 점은 뺀다.
+
+    sample 이면 파일 전체에 고르게 흩어진 SCAN_SLICES 군데에서 조금씩만 읽는다 (scan_count 만큼, 건너뛰기).
+    """
     laspy = _laspy()
     with laspy.open(path) as f:
         has_cls = "classification" in f.header.point_format.dimension_names
-        for pts in f.chunk_iterator(chunk):
+        n = f.header.point_count
+        want = scan_count(n) if sample else n
+        if want < n:
+            m = max(want // SCAN_SLICES, 1)
+
+            def slices():
+                for start in np.linspace(0, n - m, SCAN_SLICES).astype(np.int64):
+                    f.seek(int(start))
+                    yield f.read_points(m)
+            batches = slices()
+        else:
+            batches = f.chunk_iterator(chunk)
+        for pts in batches:
             x, y, z = np.asarray(pts.x, float), np.asarray(pts.y, float), np.asarray(pts.z, float)
             if has_cls:
                 keep = ~np.isin(np.asarray(pts.classification), NOISE_CLASSES)
@@ -196,16 +225,17 @@ def scan_floor(path: Path, label: str, progress=None) -> FloorScan:
     nb = max(int((z1 - z0) / bin_m) + 2, 2)
     hist = np.zeros(nb)
     rng = np.random.default_rng(0)
-    keep_p = min(1.0, SAMPLE_MAX * 3 / max(info["points"], 1))
+    expect = max(scan_count(info["points"]), 1)
+    keep_p = min(1.0, SAMPLE_MAX * 3 / expect)
     samp = []
     done = 0
-    for x, y, z in iter_points(path):
+    for x, y, z in iter_points(path, sample=True):
         hist += np.bincount(((z - z0) / bin_m).astype(int).clip(0, nb - 1), minlength=nb)
         m = rng.random(len(x)) < keep_p
         samp.append(np.column_stack([x[m], y[m], z[m]]))
         done += len(x)
         if progress:
-            progress(min(done / max(info["points"], 1), 1.0))
+            progress(min(done / expect, 1.0))
     s = np.vstack(samp) if samp else np.zeros((0, 3))
     fl, cl = find_levels(hist, z0, bin_m)
     walls = s[(s[:, 2] > fl + 0.5) & (s[:, 2] < cl - 0.5)][:SAMPLE_MAX, :2]
@@ -283,17 +313,51 @@ class _SurfaceHist:
         return pd.DataFrame({"med": med, "q05": q05, "n": n}, index=pd.Index(ks, name="k"))
 
 
+class _PlanRaster:
+    """평면도용: 건물 축 좌표의 PLAN_RES 칸마다 점 수 (격자 범위 + 둘레 1 m)."""
+
+    def __init__(self, grid: GridSpec):
+        margin = 1.0
+        w, h = grid.nx * grid.spacing_m + 2 * margin, grid.ny * grid.spacing_m + 2 * margin
+        self.res = max(PLAN_RES, float(np.sqrt(w * h / PLAN_MAX_CELLS)))
+        self.u0 = self.v0 = -margin
+        self.nx, self.ny = int(np.ceil(w / self.res)), int(np.ceil(h / self.res))
+        self.cells = {"wall": np.zeros(self.nx * self.ny, np.int32), "floor": np.zeros(self.nx * self.ny, np.int32)}
+
+    def add(self, name: str, lx: np.ndarray, ly: np.ndarray, mask: np.ndarray) -> None:
+        i = np.floor((lx[mask] - self.u0) / self.res).astype(np.int64)
+        j = np.floor((ly[mask] - self.v0) / self.res).astype(np.int64)
+        ok = (i >= 0) & (i < self.nx) & (j >= 0) & (j < self.ny)
+        if ok.any():
+            u, c = np.unique(j[ok] * self.nx + i[ok], return_counts=True)
+            self.cells[name][u] += c.astype(np.int32)
+
+    def result(self) -> dict:
+        return {"res": self.res, "u0": self.u0, "v0": self.v0,
+                **{k: v.reshape(self.ny, self.nx) for k, v in self.cells.items()}}
+
+
 # ------------------------------------------------------------------ 2차 훑기
-def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None) -> pd.DataFrame:
-    """격자점마다 바닥·천장 높이. grid_analysis_floor_level_*.csv 와 같은 열 + 격자 정의 열."""
+def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None,
+                 plan: dict | None = None) -> pd.DataFrame:
+    """격자점마다 바닥·천장 높이. grid_analysis_floor_level_*.csv 와 같은 열 + 격자 정의 열.
+
+    plan 에 dict 를 주면 같이 읽으면서 평면도용 칸(벽 단면 wall·바닥면 floor 점 수, 건물 축 좌표)을 채운다.
+    """
     s, half = grid.spacing_m, p.window_m / 2
     nn = grid.nx * grid.ny
     count = np.zeros(nn, int)
     fh = _SurfaceHist(nn, scan.floor_level, p.band_m)  # 점을 모아 두지 않고 분포만 쌓는다 (큰 파일도 메모리 일정)
     ch = _SurfaceHist(nn, scan.ceiling_level, p.band_m)
+    raster = _PlanRaster(grid) if plan is not None else None
+    wall_lo = scan.floor_level + WALL_Z[0]
+    wall_hi = min(scan.floor_level + WALL_Z[1], scan.ceiling_level - 0.3)
     done = 0
     for x, y, z in iter_points(scan.path):
         lx, ly = grid.to_local(x, y)
+        if raster is not None:
+            raster.add("wall", lx, ly, (z >= wall_lo) & (z <= wall_hi))
+            raster.add("floor", lx, ly, np.abs(z - scan.floor_level) <= p.band_m)
         i, j = np.floor(lx / s).astype(int), np.floor(ly / s).astype(int)
         inside = (i >= 0) & (i < grid.nx) & (j >= 0) & (j < grid.ny)
         inside &= (np.abs(lx - (i + 0.5) * s) <= half) & (np.abs(ly - (j + 0.5) * s) <= half)
@@ -309,6 +373,8 @@ def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None) -
             progress(min(done / max(scan.n_points, 1), 1.0))
 
     fs, cs = fh.stats(), ch.stats()
+    if raster is not None:
+        plan.update(raster.result())
     nodes = grid.nodes()
     nodes["k"] = np.arange(nn)
     nodes["buffer_points"] = count
@@ -354,30 +420,35 @@ def convert(files: list[Path], out_dir: Path, params: LasParams | None = None, l
     out_dir.mkdir(parents=True, exist_ok=True)
     labels = labels or {}
     n = len(files)
-    total = 2 * n
+    w1 = 0.15  # 1차 훑기(표본)는 2차보다 훨씬 짧다
+    total = n * (1 + w1)
 
-    def step(k, msg):
-        return (lambda f: progress((k + f) / total, msg)) if progress else None
+    def step(k, msg, wt=1.0):
+        return (lambda f: progress((k + f * wt) / total, msg)) if progress else None
 
     scans = []
     for k, f in enumerate(files):
         lab = labels.get(f.name) or floor_label(f)
-        scans.append(scan_floor(f, lab, step(k, f"{lab}: 바닥·천장 높이와 건물 방향 찾는 중")))
+        scans.append(scan_floor(f, lab, step(k * w1, f"{lab}: 바닥·천장 높이와 건물 방향 찾는 중", w1)))
     grid = None if new_grid else GridSpec.load(out_dir / GRID_FILE)
     if grid is None or abs(grid.spacing_m - p.spacing_m) > 1e-9:
         grid = make_grid(scans, p.spacing_m)
         grid.save(out_dir / GRID_FILE)
     rows, paths = [], []
     for k, s in enumerate(scans):
-        df = sample_floor(s, grid, p, step(n + k, f"{s.label}: 격자점 높이 뽑는 중"))
+        plan: dict = {}
+        df = sample_floor(s, grid, p, step(n * w1 + k, f"{s.label}: 격자점 높이·평면도 뽑는 중"), plan=plan)
         path = out_dir / CSV_NAME.format(s.label)
         df.to_csv(path, index=False, encoding="utf-8")
+        from .las_plan import plan_dxf
+        (out_dir / DXF_NAME.format(s.label)).write_bytes(plan_dxf(df, plan, s.label))
         paths.append(path)
         rows.append({"층": s.label, "LAS 파일": s.path.name, "점 수": s.n_points,
                      "바닥면 높이(m)": round(s.floor_level, 3), "천장면 높이(m)": round(s.ceiling_level, 3),
                      "층고(m)": round(s.ceiling_level - s.floor_level, 3), "건물 축(°)": round(s.angle_deg, 2),
                      "격자점": len(df), "바닥 측정": int(df["has_floor"].sum()),
-                     "천장 측정": int(df["has_ceiling"].sum()), "CSV": path.name})
+                     "천장 측정": int(df["has_ceiling"].sum()), "CSV": path.name,
+                     "도면": DXF_NAME.format(s.label)})
     if progress:
         progress(1.0, "완료")
     return grid, pd.DataFrame(rows), paths
@@ -394,15 +465,23 @@ def find_las_files(folder: Path, recursive: bool = False) -> list[Path]:
 
 def export_results(csv_paths: list[Path], labels: list[str], mode: str = "floor", fmt: str = "csv",
                    summary: pd.DataFrame | None = None) -> dict[str, bytes]:
-    """변환 결과를 저장용 파일로. mode: floor(층마다 파일) / single(한 파일). fmt: csv / xlsx.
+    """변환 결과를 저장용 파일로. mode: floor(층마다 파일) / single(한 파일). fmt: csv / xlsx / dxf.
+
+    dxf 는 변환 때 CSV 옆에 만들어 둔 층별 평면도(LAS_평면도_<층>.dxf)이고, 나누기와 상관없이 층마다 한 파일.
 
     한 파일 CSV 는 맨 앞에 '층' 열을 붙여 모든 층을 이어 붙이고, 한 파일 엑셀은 '요약' 시트 + 층마다 시트.
     CSV 는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM 으로 쓴다. {파일 이름: 내용}.
     """
     import io
 
-    frames = [pd.read_csv(p) for p in csv_paths]
     out: dict[str, bytes] = {}
+    if fmt == "dxf":
+        for p, lab in zip(csv_paths, labels):
+            d = Path(p).parent / DXF_NAME.format(lab)
+            if d.exists():
+                out[d.name] = d.read_bytes()
+        return out
+    frames = [pd.read_csv(p) for p in csv_paths]
     if mode == "single":
         if fmt == "csv":
             allf = pd.concat([f.assign(**{"층": lab})[["층", *f.columns]] for f, lab in zip(frames, labels)],
@@ -459,7 +538,7 @@ def main(argv=None) -> None:
     print()
     print(summary.to_string(index=False))
     print(f"격자: 간격 {grid.spacing_m} m, 건물 축 {grid.angle_deg}°, {grid.nx} x {grid.ny}")
-    print(f"저장: {out}")
+    print(f"저장: {out} (층별 CSV·평면도 DXF·grid.json)")
 
 
 if __name__ == "__main__":

@@ -303,7 +303,7 @@ with st.container(border=True):
     st.subheader("④ 변환 결과", icon=":material/fact_check:")
     st.success(f"{len(res['paths'])}개 층을 변환했어요. 격자 간격 {g['spacing_m']:g} m · 건물 축 {g['angle_deg']:g}° · "
                f"{g['nx']} × {g['ny']} 칸 (모든 층 같은 격자)", icon=":material/check_circle:")
-    st.dataframe(summary.drop(columns=["CSV"]), hide_index=True, width="stretch", alt="층별 변환 결과")
+    st.dataframe(summary.drop(columns=["CSV", "도면"], errors="ignore"), hide_index=True, width="stretch", alt="층별 변환 결과")
     st.caption("층고 = 천장면 − 바닥면. 바닥·천장 측정은 그 면의 점이 충분한 격자점 수예요.")
     lab = st.selectbox("층별로 보기", res["labels"], key="las_view_floor")
     df = pd.read_csv(res["paths"][res["labels"].index(lab)])
@@ -330,8 +330,8 @@ with st.container(border=True):
     with st.container(horizontal=True, vertical_alignment="bottom"):
         mode = st.segmented_control("나누기", ["floor", "single"], default="floor", required=True, key="las_save_mode",
                                     format_func={"floor": "층마다 파일", "single": "하나의 파일"}.get)
-        fmt = st.segmented_control("형식", ["csv", "xlsx"], default="csv", required=True, key="las_save_fmt",
-                                   format_func={"csv": "CSV", "xlsx": "엑셀"}.get)
+        fmt = st.segmented_control("형식", ["csv", "xlsx", "dxf"], default="csv", required=True, key="las_save_fmt",
+                                   format_func={"csv": "CSV", "xlsx": "엑셀", "dxf": "DXF 평면도"}.get)
     if not ss.get("las_save_dir"):  # 처음이거나, 다른 화면에 다녀와 입력 칸 값이 지워졌을 때
         ss.las_save_dir = ss.get("_las_save_keep") or load_ui()["las_out_folder"] or str(out_dir)
     if ss.get("_las_save_goto"):  # 폴더 선택 창에서 고른 폴더 (입력 칸을 그리기 전에 넣는다)
@@ -351,6 +351,12 @@ with st.container(border=True):
                 st.rerun()
     files_out = export_results([Path(p) for p in res["paths"]], res["labels"], mode, fmt, summary)
     names = ", ".join(files_out)
+    if fmt == "dxf":
+        st.caption("DXF 평면도는 층마다 한 장이에요: 벽선(바닥 위 1.0~1.5 m 단면)·외곽선·격자점과 높이, "
+                   "건물 축에 맞춰 반듯하게, 단위 mm.")
+        if not files_out:
+            st.info("이 결과에는 평면도가 없어요 (이전 버전으로 변환). ③에서 다시 변환하면 만들어져요.",
+                    icon=":material/info:")
     st.caption(f"만들 파일 {len(files_out)}개: {names} · 격자 정의 grid.json 도 함께 저장해요.")
     a, b = st.columns(2)
     if a.button("폴더에 저장", type="primary", icon=":material/save:", width="stretch", key="las_save"):
