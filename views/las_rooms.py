@@ -10,9 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 from slab import las_layout as L
@@ -20,6 +18,7 @@ from slab.las import CSV_NAME, DXF_NAME, OUT_DIR, PLAN_NAME
 from slab.las_plan import plan_lines
 from slab.settings_store import load_ui
 from views.folder_pick import native_pick
+from views.room_editor import room_editor
 from views.shared import clear_files, sidebar_status
 
 ss = st.session_state
@@ -159,61 +158,30 @@ with st.container(border=True):
             _save()
             ss.rooms_v = ss.get("rooms_v", 0) + 1
             st.rerun()
-    plan, walls, _ = _plan(str(out), base, _stamp(base))
+    plan, walls, (wx, wy) = _plan(str(out), base, _stamp(base))
     rooms = data["layouts"][lay]
     grid = pd.read_csv(out / CSV_NAME.format(base), usecols=["point_id", "local_x", "local_y"])
 
-    fig = go.Figure()
-    xs, ys = [], []
-    for ln in walls:
-        xs += [ln[0, 0], ln[-1, 0], None]
-        ys += [ln[0, 1], ln[-1, 1], None]
-    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#334155", width=1.2), name="벽",
-                             hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=grid["local_x"], y=grid["local_y"], mode="markers", name="격자점",
-                             marker=dict(size=5, color="#cbd5e1"), hovertext=grid["point_id"], hoverinfo="text"))
-    for i, r in enumerate(rooms):
-        poly = L.room_poly(r)
-        ring = np.vstack([poly, poly[:1]])
-        fig.add_trace(go.Scatter(x=ring[:, 0], y=ring[:, 1], mode="lines", fill="toself", name="방 (정한 범위)",
-                                 legendgroup="rooms", showlegend=i == 0, line=dict(color="#2563eb", width=1.5),
-                                 fillcolor="rgba(37,99,235,0.08)", hoverinfo="text",
-                                 hovertext=f"{r['name']} · {L.poly_area(poly):.1f}㎡"))
-        c = L.label_point(poly)
-        fig.add_annotation(x=c[0], y=c[1], text=f"<b>{r['name']}</b>", showarrow=False,
-                           font=dict(size=12, color="#1e3a8a"))
-    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white", dragmode="select",
-                      legend=dict(orientation="h", y=1.02, x=0), height=560, selectdirection="any")
-    fig.update_xaxes(showgrid=False, zeroline=False, title="건물 축 X (m)")
-    fig.update_yaxes(showgrid=False, zeroline=False, title="건물 축 Y (m)", scaleanchor="x", scaleratio=1)
-    ev = st.plotly_chart(fig, on_select="rerun", selection_mode="box", key=f"rooms_fig_{lay}_{ss.get('rooms_v', 0)}",
-                         config={"scrollZoom": True, "displaylogo": False})
-    st.caption("검은 선 = 스캔에서 찾은 실제 벽 면 (참고용, 고칠 수 없음) · 파란 영역 = 내가 정한 방 (이 범위·이름이 도면에 들어가요, "
-               "방끼리 겹치지 않아요) · 회색 점 = 격자점 (두께를 재는 자리). 빠진 방이 있으면 그림에서 **마우스로 끌어 범위를 고른 뒤** "
-               "이름을 넣어 추가하세요 — 이미 있는 방과 겹치는 부분은 빠지고 가까운 벽에 맞춰져요. 잘못 나뉜 방은 아래 표에서 지운 뒤 "
-               "다시 그리면 돼요. 휠로 확대, 위쪽 도구의 손 모양으로 이동.")
-
-    box = (ev.selection.get("box") or [None])[-1] if ev and ev.selection else None
-    if box:
-        bx, by = sorted(box["x"]), sorted(box["y"])
-        with st.container(horizontal=True, vertical_alignment="bottom"):
-            nm = st.text_input("방 이름", placeholder="예: 2호_침실1", key="rooms_add_name",
-                               help="'호수_실명'으로 쓰면 결과가 세대별로 묶여요.")
-            snap = st.checkbox("가까운 벽에 맞추기", value=True, key="rooms_snap")
-            if st.button("방으로 추가", type="primary", icon=":material/add_box:", key="rooms_add",
-                         disabled=not nm.strip()):
-                room = L.add_box_room(plan, rooms, nm.strip(), (bx[0], bx[1], by[0], by[1]), snap)
-                if room is None:
-                    st.warning("고른 범위가 이미 다른 방에 다 들어 있어요. 겹치는 방을 먼저 지우세요.", icon=":material/warning:")
-                else:
-                    rooms.append(room)
-                    _save()
-                    ss.rooms_v = ss.get("rooms_v", 0) + 1
-                    ss.pop("rooms_add_name", None)
-                    st.rerun()
-        st.caption(f"고른 범위: X {bx[0]:.2f} ~ {bx[1]:.2f} m, Y {by[0]:.2f} ~ {by[1]:.2f} m")
-
-    st.markdown("**방 목록** — 이름을 바로 고칠 수 있어요. 줄 왼쪽 칸을 골라 휴지통으로 지워요 (방 추가는 그림에서).")
+    saved = room_editor(
+        key=f"rooms_editor_{lay}", height=600, fit_key=f"{lay}/{base}", rooms=[
+            {"name": r["name"], "poly": L.room_poly(r).round(3).tolist()} for r in rooms],
+        walls=[[round(float(v), 3) for v in (*ln[0], *ln[-1])] for ln in walls], wall_x=wx, wall_y=wy,
+        points=grid[["local_x", "local_y"]].round(3).to_numpy().tolist())
+    if saved and saved.get("rooms") is not None:
+        data["layouts"][lay] = [{"name": str(r["name"]).strip(), "poly": [[round(float(x), 3), round(float(y), 3)]
+                                                                       for x, y in r["poly"]]}
+                                for r in saved["rooms"] if str(r.get("name", "")).strip() and len(r["poly"]) >= 3]
+        _save()
+        ss.rooms_v = ss.get("rooms_v", 0) + 1
+        st.rerun()
+    st.caption("검은 선 = 스캔에서 찾은 실제 벽 면 (기준선, 고칠 수 없음) · 파란 영역 = 내가 정한 방 (이 범위·이름이 도면에 들어가요) · "
+               "회색 점 = 격자점 (두께를 재는 자리). **방을 클릭**하면 주황색으로 골라지고, 방 안을 끌면 방이 통째로, "
+               "**변을 끌면 그 경계만** 움직여요. 벽 가까이 가면 벽에 붙어요. 다 고쳤으면 그림 오른쪽 위 **저장**을 누르세요.")
+    overlap = L.overlaps(plan, rooms)
+    if overlap:
+        st.warning("겹치는 방이 있어요 (겹친 곳의 격자점은 한 방에만 들어가요): "
+                   + ", ".join(f"{a}·{b} {m2:.1f}㎡" for a, b, m2 in overlap), icon=":material/warning:")
+    st.markdown("**방 목록** — 이름을 여기서 한꺼번에 고칠 수 있어요. 줄 왼쪽 칸을 골라 휴지통으로 지워요.")
     rdf = pd.DataFrame({"번호": range(len(rooms)), "이름": [r["name"] for r in rooms],
                         "넓이(㎡)": [round(L.poly_area(L.room_poly(r)), 1) for r in rooms]})
     red = st.data_editor(rdf, hide_index=True, width="stretch", num_rows="dynamic", disabled=["번호", "넓이(㎡)"],

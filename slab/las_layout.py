@@ -316,3 +316,15 @@ def label_point(poly: np.ndarray) -> np.ndarray:
     t = np.clip(((pts[:, None, :] - a) * d).sum(2) / np.maximum((d * d).sum(1), 1e-12), 0, 1)
     dist = np.linalg.norm(pts[:, None, :] - (a + t[..., None] * d), axis=2).min(1)
     return pts[np.argmax(dist)]
+
+
+def overlaps(plan: dict, rooms: list[dict]) -> list[tuple[str, str, float]]:
+    """서로 겹치는 방 쌍과 겹친 넓이(㎡)."""
+    masks = [rooms_mask(plan, [r]) > 0 for r in rooms]
+    out = []
+    for i in range(len(rooms)):
+        for j in range(i + 1, len(rooms)):
+            m2 = float((masks[i] & masks[j]).sum() * plan["res"] ** 2)
+            if m2 >= 0.05:
+                out.append((rooms[i]["name"], rooms[j]["name"], m2))
+    return out
