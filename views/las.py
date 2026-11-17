@@ -320,7 +320,7 @@ with st.container(border=True):
     if dxf.exists():
         st.plotly_chart(_plan_fig(str(dxf), dxf.stat().st_mtime, res["paths"][res["labels"].index(lab)]),
                         config={"scrollZoom": True, "displaylogo": False}, height=560, key=f"las_plan_{lab}")
-        st.caption("평면도 미리보기 (DXF 와 같은 내용): 검은 선 = 벽 단면(바닥 위 1.0~1.5 m), 초록 선 = 바닥 외곽, "
+        st.caption("평면도 미리보기 (DXF 와 같은 내용): 검은 직사각형 = 벽(바닥 위 1.0~1.5 m 단면에서 건물 축에 나란한 곧은 벽만), "
                    "빨간 점 = 바닥·천장을 모두 잰 격자점(회색은 한쪽만). 휠로 확대, 끌어서 이동, 점에 마우스를 올리면 높이가 보여요.")
     else:
         st.info("이 결과에는 평면도가 없어요 (이전 버전으로 변환). ③에서 다시 변환하면 만들어져요.", icon=":material/info:")
@@ -367,7 +367,7 @@ with st.container(border=True):
     files_out = export_results([Path(p) for p in res["paths"]], res["labels"], mode, fmt, summary)
     names = ", ".join(files_out)
     if fmt == "dxf":
-        st.caption("DXF 평면도는 층마다 한 장이에요: 벽선(바닥 위 1.0~1.5 m 단면)·외곽선·격자점과 높이, "
+        st.caption("DXF 평면도는 층마다 한 장이에요: 벽(바닥 위 1.0~1.5 m 단면의 곧은 벽)·격자점과 높이, "
                    "건물 축에 맞춰 반듯하게, 단위 mm.")
         if not files_out:
             st.info("이 결과에는 평면도가 없어요 (이전 버전으로 변환). ③에서 다시 변환하면 만들어져요.",
