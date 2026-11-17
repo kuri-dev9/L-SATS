@@ -10,15 +10,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 from slab import las_layout as L
 from slab.las import CSV_NAME, DXF_NAME, OUT_DIR, PLAN_NAME
-from slab.las_plan import has_data, plan_lines, wall_bands
+from slab.las_plan import has_data, plan_lines, wall_bands, wall_shapes
 from slab.settings_store import load_ui
 from views.folder_pick import native_pick
 from views.room_editor import room_editor
+from views.wall_editor import wall_editor
 from views.shared import clear_files, sidebar_status
 
 ss = st.session_state
@@ -145,7 +147,7 @@ with st.container(border=True):
 
 # ---------------------------------------------------------------- ② 방 정하기
 with st.container(border=True):
-    st.subheader("② 구조마다 방 정하기", icon=":material/edit_square:")
+    st.subheader("② 구조마다 벽·방 정하기", icon=":material/edit_square:")
     if ss.get("rooms_layout") not in names:
         ss.rooms_layout = names[0]
     with st.container(horizontal=True, vertical_alignment="bottom"):
@@ -162,48 +164,85 @@ with st.container(border=True):
     rooms = data["layouts"][lay]
     grid = pd.read_csv(out / CSV_NAME.format(base), usecols=["point_id", "local_x", "local_y", "floor_z", "ceiling_z"])
     grid = grid[has_data(grid)]  # 값이 없는 자리(벽 위·건물 밖)의 점은 그리지 않는다
+    my_walls = data["walls"].get(lay)  # 실무자가 고친 벽 (없으면 자동 추정 띠로 시작)
+    bands, est_t = wall_bands(plan)
+    edit_walls = my_walls if my_walls is not None else L.walls_from_bands(bands)
+    pts = grid[["local_x", "local_y"]].round(3).to_numpy().tolist()
+    faces = [[round(float(v), 3) for v in (*ln[0], *ln[-1])] for ln in walls]
+    tab_w, tab_r = st.tabs(["벽 고치기", "방 정하기"])
 
-    saved = room_editor(
-        key=f"rooms_editor_{lay}", height=600, fit_key=f"{lay}/{base}", rooms=[
-            {"name": r["name"], "poly": L.room_poly(r).round(3).tolist()} for r in rooms],
-        walls=[[round(float(v), 3) for v in (*ln[0], *ln[-1])] for ln in walls], wall_x=wx, wall_y=wy,
-        points=grid[["local_x", "local_y"]].round(3).to_numpy().tolist(), bands=wall_bands(plan)[0])
-    if saved and saved.get("rooms") is not None:
-        new = [{"name": str(r["name"]).strip(), "poly": L.clean_poly(r["poly"])}
-               for r in saved["rooms"] if str(r.get("name", "")).strip() and len(r["poly"]) >= 3]
-        new = [r for r in new if len(r["poly"]) >= 3]
-        if saved.get("cut"):  # 「방에서 빼기」: 그린 네모만큼 모든 방에서 뺀다
-            new = L.subtract_rect(plan, new, saved["cut"])
-        data["layouts"][lay] = L.resolve_overlaps(plan, new)  # 겹친 칸은 새로 그리거나 마지막에 고친 방 쪽으로
-        _save()
-        ss.rooms_v = ss.get("rooms_v", 0) + 1
-        st.rerun()
-    st.caption("회색 띠 = 벽 (추정) · 검은 선 = 스캔에서 찾은 실제 벽 면 (기준선, 고칠 수 없음) · 파란 영역 = 내가 정한 방 (이 범위·이름이 도면에 들어가요) · "
-               "회색 점 = 격자점 (두께를 재는 자리). **빈 곳을 끌면 새 방**, **방을 클릭**하면 주황색으로 골라지고 방 안을 끌면 통째로, "
-               "**변을 끌면 그 경계만** 움직여요. 변의 일부만 옮기려면 그 자리에서 **우클릭 → 「여기서 벽면 나누기」** 후 한쪽 조각을 끌어요 (필요 없는 점은 방을 고른 뒤 **꼭짓점을 다른 꼭짓점 위로 끌어 놓으면** 두 점이 곧게 이어지고 사이 점이 없어져요). 슬라브가 없는 곳처럼 방에서 빼야 할 곳은 「－ 방에서 빼기」를 켜고 그 범위를 끌면 바로 빠져요. 벽 가까이 가면 벽에 붙어요. 이미 있는 방 위에 새 방을 그리려면 「방 위에 새 방 그리기」를 "
-               "켜세요 — 저장할 때 겹친 부분은 새 방 쪽으로 정리돼요. 다 고쳤으면 그림 오른쪽 위 **저장**을 누르세요.")
-    overlap = L.overlaps(plan, rooms)
-    if overlap:
-        st.warning("겹치는 방이 있어요 (겹친 곳의 격자점은 한 방에만 들어가요): "
-                   + ", ".join(f"{a}·{b} {m2:.1f}㎡" for a, b, m2 in overlap), icon=":material/warning:")
-    st.markdown("**방 목록** — 이름을 여기서 한꺼번에 고칠 수 있어요. 줄 왼쪽 칸을 골라 휴지통으로 지워요.")
-    rdf = pd.DataFrame({"번호": range(len(rooms)), "이름": [r["name"] for r in rooms],
-                        "넓이(㎡)": [round(L.poly_area(L.room_poly(r)), 1) for r in rooms]})
-    red = st.data_editor(rdf, hide_index=True, width="stretch", num_rows="dynamic", disabled=["번호", "넓이(㎡)"],
-                         key=f"rooms_tab_{lay}_{ss.get('rooms_v', 0)}",
-                         column_config={"번호": None, "이름": st.column_config.TextColumn(required=True)})
-    new_rooms = [{**rooms[int(r["번호"])], "name": str(r["이름"]).strip()} for _, r in red.iterrows()
-                 if pd.notna(r["번호"]) and str(r["이름"] or "").strip()]
-    if new_rooms != rooms:
-        data["layouts"][lay] = new_rooms
-        _save()
-        st.rerun()
-    dup = sorted({r["name"] for r in rooms if [q["name"] for q in rooms].count(r["name"]) > 1})
-    if dup:
-        st.warning(f"이름이 겹치는 방이 있어요: {', '.join(dup)}", icon=":material/warning:")
-    auto = [r["name"] for r in rooms if re.fullmatch(r"실\d+", r["name"])]
-    if auto:
-        st.caption(f"아직 자동 이름인 방 {len(auto)}개: {', '.join(auto)} — 실제 이름으로 바꿔 주세요.")
+    with tab_w:
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.caption("벽(회색)은 처음엔 스캔에서 추정한 벽이에요. 기본 도면과 다르면 여기서 고치세요 — 고친 벽이 이 구조의 모든 층 도면에 들어가요."
+                       + (" **지금은 고친 벽을 쓰고 있어요.**" if my_walls is not None else " 지금은 자동 추정 벽이에요."))
+            if my_walls is not None and st.button("자동 추정 벽으로 되돌리기", icon=":material/restart_alt:", key="walls_reset",
+                                                  help="고친 벽을 지우고 스캔에서 추정한 벽으로 돌아가요."):
+                data["walls"].pop(lay, None)
+                _save()
+                ss.rooms_v = ss.get("rooms_v", 0) + 1
+                st.rerun()
+        wsaved = wall_editor(key=f"walls_editor_{lay}", faces=faces, points=pts, walls=edit_walls, fit_key=f"{lay}/{base}",
+                             default_t=est_t)
+        if wsaved and wsaved.get("walls") is not None:
+            data["walls"][lay] = [{"k": w.get("k", "line"), "a": [round(float(v), 3) for v in w["a"]],
+                                   "b": [round(float(v), 3) for v in w["b"]], "t": round(float(w.get("t", est_t)), 3),
+                                   **({"m": [round(float(v), 3) for v in w["m"]]} if w.get("k") == "arc" and w.get("m") else {})}
+                                  for w in wsaved["walls"]]
+            _save()
+            ss.rooms_v = ss.get("rooms_v", 0) + 1
+            st.rerun()
+        st.caption("검은 가는 선 = 스캔에서 찾은 실제 벽 면 (기준) · 회색 = 벽 · 회색 점 = 격자점. 「／ 직선 벽」: 시작점 클릭 → 끝점 클릭 "
+                   "(이어서 다음 벽, Esc 로 끝). 그리는 중 **숫자를 치고 Enter** 면 그 길이(mm)로 그려요. 「◠ 곡선 벽」: 시작점 → 끝점 → 휘는 정도 클릭. "
+                   "벽을 클릭해 고르면 끌어서 옮기고, 끝점(□)을 끌어 길이·방향을, 곡선은 ◇ 로 휘는 정도를 바꿔요. 끝점은 다른 벽 끝에 붙고 "
+                   "수평·수직은 딱 맞춰져요 (Shift 를 누르면 자유롭게). 오른쪽 위 칸에서 고른 벽의 **두께·길이(mm)** 를 입력해요. "
+                   "다 고쳤으면 **저장**.")
+
+    if my_walls is not None:  # 방 경계는 고친 벽의 면에 붙인다
+        fx, fy = L.wall_faces(my_walls)
+        wx, wy = np.concatenate([wx, fx]), np.concatenate([wy, fy])
+    wall_polys = [p.round(3).tolist() for p in wall_shapes(plan, my_walls)]
+    with tab_r:
+        saved = room_editor(
+            key=f"rooms_editor_{lay}", height=600, fit_key=f"{lay}/{base}", rooms=[
+                {"name": r["name"], "poly": L.room_poly(r).round(3).tolist()} for r in rooms],
+            walls=faces, wall_x=wx, wall_y=wy,
+            points=pts, wall_polys=wall_polys)
+        if saved and saved.get("rooms") is not None:
+            new = [{"name": str(r["name"]).strip(), "poly": L.clean_poly(r["poly"])}
+                   for r in saved["rooms"] if str(r.get("name", "")).strip() and len(r["poly"]) >= 3]
+            new = [r for r in new if len(r["poly"]) >= 3]
+            if saved.get("cut"):  # 「방에서 빼기」: 그린 네모만큼 모든 방에서 뺀다
+                new = L.subtract_rect(plan, new, saved["cut"])
+            data["layouts"][lay] = L.resolve_overlaps(plan, new)  # 겹친 칸은 새로 그리거나 마지막에 고친 방 쪽으로
+            _save()
+            ss.rooms_v = ss.get("rooms_v", 0) + 1
+            st.rerun()
+        st.caption("회색 = 벽 (「벽 고치기」에서 고친 벽, 없으면 추정) · 검은 선 = 스캔에서 찾은 실제 벽 면 (기준선, 고칠 수 없음) · 파란 영역 = 내가 정한 방 (이 범위·이름이 도면에 들어가요) · "
+                   "회색 점 = 격자점 (두께를 재는 자리). **빈 곳을 끌면 새 방**, **방을 클릭**하면 주황색으로 골라지고 방 안을 끌면 통째로, "
+                   "**변을 끌면 그 경계만** 움직여요. 변의 일부만 옮기려면 그 자리에서 **우클릭 → 「여기서 벽면 나누기」** 후 한쪽 조각을 끌어요 (필요 없는 점은 방을 고른 뒤 **꼭짓점을 다른 꼭짓점 위로 끌어 놓으면** 두 점이 곧게 이어지고 사이 점이 없어져요). 슬라브가 없는 곳처럼 방에서 빼야 할 곳은 「－ 방에서 빼기」를 켜고 그 범위를 끌면 바로 빠져요. 벽 가까이 가면 벽에 붙어요. 이미 있는 방 위에 새 방을 그리려면 「방 위에 새 방 그리기」를 "
+                   "켜세요 — 저장할 때 겹친 부분은 새 방 쪽으로 정리돼요. 다 고쳤으면 그림 오른쪽 위 **저장**을 누르세요.")
+        overlap = L.overlaps(plan, rooms)
+        if overlap:
+            st.warning("겹치는 방이 있어요 (겹친 곳의 격자점은 한 방에만 들어가요): "
+                       + ", ".join(f"{a}·{b} {m2:.1f}㎡" for a, b, m2 in overlap), icon=":material/warning:")
+        st.markdown("**방 목록** — 이름을 여기서 한꺼번에 고칠 수 있어요. 줄 왼쪽 칸을 골라 휴지통으로 지워요.")
+        rdf = pd.DataFrame({"번호": range(len(rooms)), "이름": [r["name"] for r in rooms],
+                            "넓이(㎡)": [round(L.poly_area(L.room_poly(r)), 1) for r in rooms]})
+        red = st.data_editor(rdf, hide_index=True, width="stretch", num_rows="dynamic", disabled=["번호", "넓이(㎡)"],
+                             key=f"rooms_tab_{lay}_{ss.get('rooms_v', 0)}",
+                             column_config={"번호": None, "이름": st.column_config.TextColumn(required=True)})
+        new_rooms = [{**rooms[int(r["번호"])], "name": str(r["이름"]).strip()} for _, r in red.iterrows()
+                     if pd.notna(r["번호"]) and str(r["이름"] or "").strip()]
+        if new_rooms != rooms:
+            data["layouts"][lay] = new_rooms
+            _save()
+            st.rerun()
+        dup = sorted({r["name"] for r in rooms if [q["name"] for q in rooms].count(r["name"]) > 1})
+        if dup:
+            st.warning(f"이름이 겹치는 방이 있어요: {', '.join(dup)}", icon=":material/warning:")
+        auto = [r["name"] for r in rooms if re.fullmatch(r"실\d+", r["name"])]
+        if auto:
+            st.caption(f"아직 자동 이름인 방 {len(auto)}개: {', '.join(auto)} — 실제 이름으로 바꿔 주세요.")
 
 # ---------------------------------------------------------------- ③ 적용
 with st.container(border=True):

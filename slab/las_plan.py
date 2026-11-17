@@ -91,7 +91,8 @@ def plan_lines(plan: dict) -> dict[str, list[np.ndarray]]:
     return {"벽선": lines}
 
 
-def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None = None) -> bytes:
+def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None = None,
+             walls: list[dict] | None = None) -> bytes:
     """층별 DXF 평면도 (R2010, 단위 mm, 건물 축 좌표).
 
     rooms([{name, poly} 건물 축 m])를 주면 ROOM_BOUNDARY 레이어에 실 경계와 이름을 넣는다.
@@ -121,10 +122,9 @@ def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None 
         msp.add_lwpolyline((poly * mm).tolist(), close=True, dxfattribs={"layer": ROOM_LAYER})
         msp.add_text(str(r["name"]), height=th * 1.3, dxfattribs={"layer": ROOM_LAYER}).set_placement(
             tuple(label_point(poly) * mm), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
-    for x0, x1, y0, y1 in (wall_bands(plan)[0] if plan else []):  # 해치만 (닫힌 선을 쓰면 두께 분석이 방으로 읽음)
+    for poly in wall_shapes(plan, walls):  # 해치만 (닫힌 선을 쓰면 두께 분석이 방으로 읽음)
         h = msp.add_hatch(color=8, dxfattribs={"layer": "벽"})
-        h.paths.add_polyline_path([(x0 * mm, y0 * mm), (x1 * mm, y0 * mm), (x1 * mm, y1 * mm), (x0 * mm, y1 * mm)],
-                                  is_closed=True)
+        h.paths.add_polyline_path([(float(x) * mm, float(y) * mm) for x, y in poly], is_closed=True)
     for r in df[has_data(df)].itertuples(index=False):
         x, y = r.local_x * mm, r.local_y * mm
         msp.add_circle((x, y), th * 0.4, dxfattribs={"layer": "격자점"})
@@ -152,21 +152,32 @@ def has_data(df: pd.DataFrame) -> pd.Series:
     return df["floor_z"].notna() | df["ceiling_z"].notna()
 
 
-def plan_figure(dxf_bytes: bytes, df: pd.DataFrame, plan: dict | None = None):
+def wall_shapes(plan: dict | None, walls: list[dict] | None = None) -> list[np.ndarray]:
+    """벽 그림용 다각형들: 실무자가 고친 벽(walls)이 있으면 그것, 없으면 자동 추정 띠."""
+    if walls is not None:
+        from .las_layout import wall_polygon
+
+        return [wall_polygon(w) for w in walls]
+    return [np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) for x0, x1, y0, y1 in (wall_bands(plan)[0] if plan else [])]
+
+
+def plan_figure(dxf_bytes: bytes, df: pd.DataFrame, plan: dict | None = None, walls: list[dict] | None = None):
     """화면 미리보기: 벽 띠(회색) + DXF 의 벽선 + 값이 있는 격자점(마우스를 올리면 이름·높이). plotly 그림 (단위 m)."""
     import ezdxf
     import plotly.graph_objects as go
 
     doc = ezdxf.read(io.StringIO(dxf_bytes.decode("utf-8")))
     fig = go.Figure()
-    bands, t = wall_bands(plan) if plan else ([], 0)
-    if bands:
+    shapes = wall_shapes(plan, walls)
+    if shapes:
         bx, by = [], []
-        for x0, x1, y0, y1 in bands:
-            bx += [x0, x1, x1, x0, x0, None]
-            by += [y0, y0, y1, y1, y0, None]
+        for poly in shapes:
+            ring = np.vstack([poly, poly[:1]])
+            bx += list(ring[:, 0]) + [None]
+            by += list(ring[:, 1]) + [None]
+        name = "벽 (방 배치에서 고친 벽)" if walls is not None else f"벽 (추정, 두께 약 {wall_bands(plan)[1] * 1000:.0f} mm)"
         fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", fill="toself", fillcolor="rgba(148,163,184,0.55)",
-                                 line=dict(width=0), name=f"벽 (추정, 두께 약 {t * 1000:.0f} mm)", hoverinfo="skip"))
+                                 line=dict(width=0), name=name, hoverinfo="skip"))
     style = {"벽선": dict(color="#334155", width=1.2)}
     for layer, line in style.items():
         xs, ys = [], []

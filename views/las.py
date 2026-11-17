@@ -28,14 +28,15 @@ REMOTE = st.context.ip_address is not None  # 다른 PC 에서 접속 (localhost
 
 
 @st.cache_data(show_spinner=False, max_entries=20)
-def _plan_fig(dxf_path: str, mtime: float, csv_path: str, csv_mtime: float = 0.0):
+def _plan_fig(dxf_path: str, mtime: float, csv_path: str, csv_mtime: float = 0.0, layouts_mtime: float = 0.0):
+    from slab.las_layout import load_layouts, load_plan
     from slab.las_plan import plan_figure
 
-    from slab.las_layout import load_plan
-
     p = Path(dxf_path)
-    plan = load_plan(p.parent, p.stem.replace("LAS_평면도_", "", 1))
-    return plan_figure(p.read_bytes(), pd.read_csv(csv_path), plan)
+    lab = p.stem.replace("LAS_평면도_", "", 1)
+    data = load_layouts(p.parent)  # 방 배치에서 벽을 고쳤으면 그 벽으로
+    return plan_figure(p.read_bytes(), pd.read_csv(csv_path), load_plan(p.parent, lab),
+                       data["walls"].get(data["floors"].get(lab, "")))
 
 
 @st.cache_data(show_spinner=False, max_entries=500)
@@ -220,7 +221,8 @@ with st.container(border=True):
     dxf = Path(res["out"]) / DXF_NAME.format(lab)
     if dxf.exists():
         csv_p = Path(res["paths"][res["labels"].index(lab)])
-        ev = st.plotly_chart(_plan_fig(str(dxf), dxf.stat().st_mtime, str(csv_p), csv_p.stat().st_mtime),
+        ev = st.plotly_chart(_plan_fig(str(dxf), dxf.stat().st_mtime, str(csv_p), csv_p.stat().st_mtime,
+                                       (dxf.parent / "layouts.json").stat().st_mtime if (dxf.parent / "layouts.json").exists() else 0.0),
                              config={"scrollZoom": True, "displaylogo": False}, height=560,
                              key=f"las_plan_{lab}_{ss.get('las_ex_v', 0)}", on_select="rerun",
                              selection_mode=("points", "box", "lasso"))

@@ -324,8 +324,8 @@ def load_layouts(out_dir: Path) -> dict:
     p = Path(out_dir) / LAYOUT_FILE
     if p.exists():
         d = json.loads(p.read_text(encoding="utf-8"))
-        return {"layouts": d.get("layouts", {}), "floors": d.get("floors", {})}
-    return {"layouts": {}, "floors": {}}
+        return {"layouts": d.get("layouts", {}), "floors": d.get("floors", {}), "walls": d.get("walls", {})}
+    return {"layouts": {}, "floors": {}, "walls": {}}
 
 
 def save_layouts(out_dir: Path, data: dict) -> None:
@@ -339,10 +339,11 @@ def apply_layouts(out_dir: Path, labels: list[str], data: dict) -> dict[str, int
     out_dir = Path(out_dir)
     done = {}
     for lab in labels:
-        rooms = data["layouts"].get(data["floors"].get(lab, ""), [])
+        lay = data["floors"].get(lab, "")
+        rooms = data["layouts"].get(lay, [])
         df = pd.read_csv(out_dir / CSV_NAME.format(lab))
         plan = load_plan(out_dir, lab) or {}
-        (out_dir / DXF_NAME.format(lab)).write_bytes(plan_dxf(df, plan, lab, rooms))
+        (out_dir / DXF_NAME.format(lab)).write_bytes(plan_dxf(df, plan, lab, rooms, data.get("walls", {}).get(lay)))
         done[lab] = len(rooms)
     return done
 
@@ -468,8 +469,10 @@ def _rebuild_dxf(out_dir: Path, label: str, df: pd.DataFrame) -> None:
     from .las_plan import plan_dxf
 
     data = load_layouts(out_dir)
-    rooms = data["layouts"].get(data["floors"].get(label, ""), [])
-    (Path(out_dir) / DXF_NAME.format(label)).write_bytes(plan_dxf(df, load_plan(out_dir, label) or {}, label, rooms))
+    lay = data["floors"].get(label, "")
+    rooms = data["layouts"].get(lay, [])
+    (Path(out_dir) / DXF_NAME.format(label)).write_bytes(
+        plan_dxf(df, load_plan(out_dir, label) or {}, label, rooms, data["walls"].get(lay)))
 
 
 def exclude_points(out_dir: Path, label: str, ids: list[str]) -> int:
@@ -504,3 +507,64 @@ def restore_points(out_dir: Path, label: str, ids: list[str]) -> int:
     (out_dir / EXCLUDE_FILE).write_text(json.dumps(ex, ensure_ascii=False, indent=1), encoding="utf-8")
     _rebuild_dxf(out_dir, label, df)
     return len(rows)
+
+
+# ------------------------------------------------------------------ 실무자가 고친 벽 (구조마다)
+def walls_from_bands(bands: list) -> list[dict]:
+    """자동 추정 벽 띠 [x0, x1, y0, y1] → 편집용 벽 {k: line, a, b, t} (긴 쪽이 중심선, 짧은 쪽이 두께)."""
+    out = []
+    for x0, x1, y0, y1 in bands:
+        if x1 - x0 >= y1 - y0:
+            y = round((y0 + y1) / 2, 3)
+            out.append({"k": "line", "a": [x0, y], "b": [x1, y], "t": round(y1 - y0, 3)})
+        else:
+            x = round((x0 + x1) / 2, 3)
+            out.append({"k": "line", "a": [x, y0], "b": [x, y1], "t": round(x1 - x0, 3)})
+    return out
+
+
+def _arc(w: dict):
+    a, m, b = (np.asarray(w[k], float) for k in ("a", "m", "b"))
+    d = 2 * (a[0] * (m[1] - b[1]) + m[0] * (b[1] - a[1]) + b[0] * (a[1] - m[1]))
+    if abs(d) < 1e-9:
+        return None
+    s2 = lambda p: p @ p  # noqa: E731
+    c = np.array([s2(a) * (m[1] - b[1]) + s2(m) * (b[1] - a[1]) + s2(b) * (a[1] - m[1]),
+                  s2(a) * (b[0] - m[0]) + s2(m) * (a[0] - b[0]) + s2(b) * (m[0] - a[0])]) / d
+    r = float(np.hypot(*(a - c)))
+    ang = lambda p: np.arctan2(p[1] - c[1], p[0] - c[0])  # noqa: E731
+    sa, ma, ea = ang(a), ang(m), ang(b)
+    tau = 2 * np.pi
+    ccw = (ma - sa) % tau < (ea - sa) % tau
+    span = (ea - sa) % tau if ccw else -((sa - ea) % tau)
+    return c, r, sa, span
+
+
+def wall_polygon(w: dict, seg: int = 24) -> np.ndarray:
+    """벽 하나를 두께가 있는 다각형으로 (도면 해치·그림용, 건물 축 m)."""
+    t = float(w.get("t", 0.2)) / 2
+    if w.get("k") == "arc" and w.get("m") is not None and (A := _arc(w)) is not None:
+        c, r, sa, span = A
+        th = sa + span * np.linspace(0, 1, seg + 1)
+        outer = np.column_stack([c[0] + (r + t) * np.cos(th), c[1] + (r + t) * np.sin(th)])
+        inner = np.column_stack([c[0] + (r - t) * np.cos(th), c[1] + (r - t) * np.sin(th)])[::-1]
+        return np.vstack([outer, inner])
+    a, b = np.asarray(w["a"], float), np.asarray(w["b"], float)
+    d = b - a
+    L = float(np.hypot(*d)) or 1e-9
+    n = np.array([-d[1], d[0]]) / L * t
+    return np.array([a + n, b + n, b - n, a - n])
+
+
+def wall_faces(walls: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+    """가로·세로 직선 벽의 양쪽 면 위치 (방 경계를 붙일 자리): (x 들, y 들)."""
+    xs, ys = [], []
+    for w in walls or []:
+        if w.get("k") == "arc":
+            continue
+        (ax, ay), (bx, by), t = w["a"], w["b"], float(w.get("t", 0.2)) / 2
+        if abs(ay - by) < 1e-6:
+            ys += [ay - t, ay + t]
+        elif abs(ax - bx) < 1e-6:
+            xs += [ax - t, ax + t]
+    return np.array(xs), np.array(ys)

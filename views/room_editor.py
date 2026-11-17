@@ -50,8 +50,8 @@ color:#1e293b;cursor:pointer}
 .bar button.save{font-weight:700}
 .bar button.save.dirty{background:#ea580c;border-color:#ea580c;color:#fff}
 .bar .sep{flex:1}
-.status{position:absolute;left:10px;bottom:30px;font-size:12px;color:#1e293b;background:rgba(255,255,255,.9);padding:2px 6px;border-radius:6px}
-.help{position:absolute;left:10px;bottom:8px;font-size:11px;color:#64748b}
+.status{position:absolute;left:10px;bottom:46px;font-size:12px;color:#1e293b;background:rgba(255,255,255,.9);padding:2px 6px;border-radius:6px}
+.help{position:absolute;left:10px;right:10px;bottom:8px;font-size:11px;color:#64748b;line-height:1.4}
 .menu{display:none;position:absolute;z-index:5;min-width:180px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;
 box-shadow:0 6px 18px rgba(15,23,42,.15);padding:4px}
 .menu button{display:block;width:100%;text-align:left;font:inherit;font-size:13px;padding:6px 10px;border:0;background:none;
@@ -252,9 +252,8 @@ function make(root) {
     ctx.clearRect(0, 0, S.W, S.H)
     // 벽 띠 (추정)
     ctx.fillStyle = 'rgba(148,163,184,0.55)'
-    for (const b of (S.d.bands || [])) {
-      const [ax, ay] = toS(b[0], b[3]), [bx, by] = toS(b[1], b[2])
-      ctx.fillRect(ax, ay, bx - ax, by - ay)
+    for (const poly of (S.d.wallPolys || [])) {  // 벽 (방 배치에서 고친 벽, 없으면 자동 추정)
+      ctx.beginPath(); poly.forEach((q, k) => { const s = toS(q[0], q[1]); k ? ctx.lineTo(...s) : ctx.moveTo(...s) }); ctx.closePath(); ctx.fill()
     }
     // 벽 면
     ctx.strokeStyle = '#334155'; ctx.lineWidth = 1.3; ctx.beginPath()
@@ -503,9 +502,9 @@ _EDITOR = st.components.v2.component("lsats_room_editor", html=HTML, css=CSS, js
 
 
 def room_editor(*, key: str, walls: list, wall_x, wall_y, points: list, rooms: list[dict], fit_key: str,
-                height: int = 600, bands: list | None = None):
+                height: int = 600, wall_polys: list | None = None):
     """방 편집기를 그리고, 「저장」을 누른 실행에서만 {rooms: [...]} 를 돌려준다 (그 밖엔 None)."""
-    data = {"walls": walls, "bands": bands or [], "wx": [float(v) for v in wall_x], "wy": [float(v) for v in wall_y], "pts": points,
+    data = {"walls": walls, "wallPolys": wall_polys or [], "wx": [float(v) for v in wall_x], "wy": [float(v) for v in wall_y], "pts": points,
             "rooms": rooms, "h": height, "fitKey": fit_key,
             "rev": hashlib.md5(json.dumps(rooms, ensure_ascii=False, sort_keys=True).encode()).hexdigest()}
     res = _EDITOR(key=key, data=data, height=height + 2, on_save_change=lambda: None)
