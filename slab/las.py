@@ -236,13 +236,61 @@ def make_grid(scans: list[FloorScan], spacing_m: float) -> GridSpec:
     return GridSpec(angle, round(float(ox), 4), round(float(oy), 4), spacing_m, max(nx, 1), max(ny, 1))
 
 
+class _SurfaceHist:
+    """격자점마다 한 면(바닥/천장) 둘레 점의 높이 분포를 1 mm 칸으로 쌓는다.
+
+    면 높이 = 5 mm 칸으로 나눠 점이 가장 많이 몰린 칸(±10 mm)의 평균. 벽·가구처럼 세로로 퍼진 점이 섞여도
+    수평면 높이만 잡는다. 1 mm 칸이 5 mm 칸에 딱 맞게 들어가도록 시작 높이를 5 mm 배수로 맞춘다.
+    점 자체는 모아 두지 않으므로 파일이 커도 메모리는 (격자점 수 × 칸 수)로 일정하다.
+    """
+
+    BIN = 0.001
+    GROUP = 5  # 1 mm × 5 = 5 mm 칸
+
+    def __init__(self, nn: int, level: float, band: float):
+        self.nn = nn
+        self.lo = np.floor((level - band) / (self.BIN * self.GROUP)) * self.BIN * self.GROUP
+        nb = int(np.ceil((level + band - self.lo) / self.BIN)) + 1
+        self.nb = -(-nb // self.GROUP) * self.GROUP
+        self.cnt = np.zeros(nn * self.nb, np.int32)
+        self.zsum = np.zeros(nn * self.nb)
+
+    def add(self, k: np.ndarray, z: np.ndarray) -> None:
+        if not len(k):
+            return
+        b = np.clip(np.floor((z - self.lo) / self.BIN).astype(np.int64), 0, self.nb - 1)
+        u, inv = np.unique(k.astype(np.int64) * self.nb + b, return_inverse=True)
+        self.cnt[u] += np.bincount(inv).astype(np.int32)
+        self.zsum[u] += np.bincount(inv, weights=z)
+
+    def stats(self) -> pd.DataFrame:
+        """격자점(k)마다 med(면 높이), q05(아래 5 % 높이), n(점 수). 점이 없는 격자점은 뺀다."""
+        C = self.cnt.reshape(self.nn, self.nb)
+        n = C.sum(1)
+        ks = np.flatnonzero(n)
+        if not len(ks):
+            return pd.DataFrame(columns=["med", "q05", "n"])
+        C, Z, n = C[ks].astype(float), self.zsum.reshape(self.nn, self.nb)[ks], n[ks]
+        C5 = C.reshape(len(ks), -1, self.GROUP).sum(2)
+        Z5 = Z.reshape(len(ks), -1, self.GROUP).sum(2)
+        top = C5.argmax(1)  # 가장 많은 칸 (같으면 낮은 쪽)
+        near = np.abs(np.arange(C5.shape[1]) - top[:, None]) <= 2
+        med = (Z5 * near).sum(1) / (C5 * near).sum(1)
+        rank = np.floor(0.05 * (n - 1))  # 아래 5 % 점이 든 1 mm 칸의 평균 높이
+        b = (C.cumsum(1) > rank[:, None]).argmax(1)
+        rows = np.arange(len(ks))
+        q05 = Z[rows, b] / C[rows, b]
+        return pd.DataFrame({"med": med, "q05": q05, "n": n}, index=pd.Index(ks, name="k"))
+
+
 # ------------------------------------------------------------------ 2차 훑기
 def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None) -> pd.DataFrame:
     """격자점마다 바닥·천장 높이. grid_analysis_floor_level_*.csv 와 같은 열 + 격자 정의 열."""
     s, half = grid.spacing_m, p.window_m / 2
     nn = grid.nx * grid.ny
     count = np.zeros(nn, int)
-    parts_f, parts_c = [], []  # (격자점 번호, z)
+    fh = _SurfaceHist(nn, scan.floor_level, p.band_m)  # 점을 모아 두지 않고 분포만 쌓는다 (큰 파일도 메모리 일정)
+    ch = _SurfaceHist(nn, scan.ceiling_level, p.band_m)
     done = 0
     for x, y, z in iter_points(scan.path):
         lx, ly = grid.to_local(x, y)
@@ -254,28 +302,13 @@ def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None) -
         count += np.bincount(k, minlength=nn)
         fm = np.abs(zz - scan.floor_level) <= p.band_m
         cm = np.abs(zz - scan.ceiling_level) <= p.band_m
-        parts_f.append(np.column_stack([k[fm], zz[fm]]))
-        parts_c.append(np.column_stack([k[cm], zz[cm]]))
+        fh.add(k[fm], zz[fm])
+        ch.add(k[cm], zz[cm])
         done += len(x)
         if progress:
             progress(min(done / max(scan.n_points, 1), 1.0))
 
-    def stats(parts):
-        """격자점마다 면 높이: 5 mm 칸으로 나눠 점이 가장 많이 몰린 높이(±10 mm)의 평균.
-        벽·가구처럼 세로로 퍼진 점이 섞여도 수평면 높이만 잡는다 (중앙값보다 덜 끌려간다)."""
-        a = np.vstack(parts) if parts else np.zeros((0, 2))
-        df = pd.DataFrame({"k": a[:, 0].astype(int), "z": a[:, 1]})
-        if df.empty:
-            return pd.DataFrame(columns=["med", "q05", "n"])
-        df["b"] = np.floor(df["z"] / 0.005).astype(np.int64)
-        cnt = df.groupby(["k", "b"]).size().rename("c").reset_index()
-        top = cnt.loc[cnt.groupby("k")["c"].idxmax(), ["k", "b"]].rename(columns={"b": "bt"})
-        df = df.merge(top, on="k")
-        near = df[(df["b"] - df["bt"]).abs() <= 2]
-        g = df.groupby("k")["z"]
-        return pd.DataFrame({"med": near.groupby("k")["z"].mean(), "q05": g.quantile(0.05), "n": g.size()})
-
-    fs, cs = stats(parts_f), stats(parts_c)
+    fs, cs = fh.stats(), ch.stats()
     nodes = grid.nodes()
     nodes["k"] = np.arange(nn)
     nodes["buffer_points"] = count
