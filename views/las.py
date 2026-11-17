@@ -217,9 +217,14 @@ with st.container(border=True):
         st.dataframe(view[["point_id", "grid_row", "grid_col", "x", "y", "floor_z", "ceiling_z", "height_mm",
                            "바닥 편차(mm)", "천장 편차(mm)", "floor_points", "ceiling_points"]],
                      hide_index=True, width="stretch", height=360, alt=f"{lab} 격자점 높이")
-    st.page_link("views/las_rooms.py", label="방별로 보려면: 방 배치에서 방 이름·범위 정하기", icon=":material/floor_lamp:")
-    if st.button("두께 분석으로 보내기", type="primary", icon=":material/arrow_forward:", key="las_send",
-                 help="변환한 층들을 새 작업으로 두께 분석에 올립니다. 지금 작업은 작업 내역에 남아요."):
+    st.markdown("**다음 단계** — 방 이름·범위를 정하면 두께 분석이 방별로 나와요. 방 없이 층 전체로만 보려면 바로 보내도 돼요.")
+    c1, c2 = st.columns(2)
+    if c1.button("방 배치하기", type="primary", icon=":material/floor_lamp:", width="stretch", key="las_to_rooms",
+                 help="이 변환 결과로 「방 배치」 화면을 엽니다."):
+        ss.rooms_dir = res["out"]
+        st.switch_page("views/las_rooms.py")
+    if c2.button("방 없이 두께 분석으로 보내기", icon=":material/arrow_forward:", width="stretch", key="las_send",
+                 help="변환한 층들을 새 작업으로 두께 분석에 올립니다 (층 전체 결과만). 지금 작업은 작업 내역에 남아요."):
         _send_to_analysis(res["paths"])
         st.switch_page("views/analysis.py")
 

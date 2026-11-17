@@ -180,13 +180,17 @@ with st.container(border=True):
                       fillcolor="rgba(37,99,235,0.08)")
         fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=f"<b>{r['name']}</b>", showarrow=False,
                            font=dict(size=12, color="#1e3a8a"))
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name="방 (정한 범위)",  # 범례용
+                             line=dict(color="#2563eb", width=1.5)))
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white", dragmode="select",
                       legend=dict(orientation="h", y=1.02, x=0), height=560, selectdirection="any")
     fig.update_xaxes(showgrid=False, zeroline=False, title="건물 축 X (m)")
     fig.update_yaxes(showgrid=False, zeroline=False, title="건물 축 Y (m)", scaleanchor="x", scaleratio=1)
     ev = st.plotly_chart(fig, on_select="rerun", selection_mode="box", key=f"rooms_fig_{lay}_{ss.get('rooms_v', 0)}",
                          config={"scrollZoom": True, "displaylogo": False})
-    st.caption("그림에서 **마우스로 끌어 범위를 고르면** 그 범위를 방으로 추가할 수 있어요. 휠로 확대, 위쪽 도구의 손 모양으로 이동.")
+    st.caption("검은 선 = 스캔에서 찾은 실제 벽 면 (참고용, 고칠 수 없음) · 파란 네모 = 내가 정한 방 (이 범위·이름이 도면에 들어가요) · "
+               "회색 점 = 격자점 (두께를 재는 자리). 자동 초안이 벽과 어긋나거나 빠진 방이 있으면, 그림에서 **마우스로 끌어 범위를 "
+               "고른 뒤** 이름을 넣어 방으로 추가하세요. 휠로 확대, 위쪽 도구의 손 모양으로 이동.")
 
     box = (ev.selection.get("box") or [None])[-1] if ev and ev.selection else None
     if box:
