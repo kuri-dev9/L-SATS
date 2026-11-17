@@ -93,7 +93,7 @@ def plan_lines(plan: dict) -> dict[str, list[np.ndarray]]:
 def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None = None) -> bytes:
     """층별 DXF 평면도 (R2010, 단위 mm, 건물 축 좌표).
 
-    rooms([{name, x0, y0, x1, y1} 건물 축 m])를 주면 ROOM_BOUNDARY 레이어에 실 경계와 이름을 넣는다.
+    rooms([{name, poly} 건물 축 m])를 주면 ROOM_BOUNDARY 레이어에 실 경계와 이름을 넣는다.
     격자점 이름(G001-001)이 CSV 의 point_id 와 같아서, 두께 분석이 이 도면을 측량 좌표에 자동으로 맞춘다.
     """
     import ezdxf
@@ -113,12 +113,13 @@ def plan_dxf(df: pd.DataFrame, plan: dict, label: str, rooms: list[dict] | None 
 
     s_mm = float(df["grid_spacing_m"].iloc[0]) * mm if len(df) and "grid_spacing_m" in df else 1500.0
     th = s_mm * 0.08  # 글자 높이 (격자 간격에 맞춤)
+    from .las_layout import label_point, room_poly
+
     for r in rooms or []:
-        x0, x1 = sorted((r["x0"] * mm, r["x1"] * mm))
-        y0, y1 = sorted((r["y0"] * mm, r["y1"] * mm))
-        msp.add_lwpolyline([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], close=True, dxfattribs={"layer": ROOM_LAYER})
+        poly = room_poly(r)
+        msp.add_lwpolyline((poly * mm).tolist(), close=True, dxfattribs={"layer": ROOM_LAYER})
         msp.add_text(str(r["name"]), height=th * 1.3, dxfattribs={"layer": ROOM_LAYER}).set_placement(
-            ((x0 + x1) / 2, (y0 + y1) / 2), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
+            tuple(label_point(poly) * mm), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
     for r in df.itertuples(index=False):
         x, y = r.local_x * mm, r.local_y * mm
         msp.add_circle((x, y), th * 0.4, dxfattribs={"layer": "격자점"})

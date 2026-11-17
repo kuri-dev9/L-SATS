@@ -24,7 +24,6 @@ from views.shared import clear_files, sidebar_status
 
 ss = st.session_state
 REMOTE = st.context.ip_address is not None
-ROOM_COLS = ["name", "x0", "x1", "y0", "y1"]
 
 st.title("방 배치", icon=":material/floor_lamp:")
 st.caption("LAS 로 만든 층에 방 이름과 범위를 정해 도면에 넣어요. 같은 구조의 층은 한 번만 정하면 모두 같이 들어가고, "
@@ -160,7 +159,7 @@ with st.container(border=True):
             _save()
             ss.rooms_v = ss.get("rooms_v", 0) + 1
             st.rerun()
-    plan, walls, (wx, wy) = _plan(str(out), base, _stamp(base))
+    plan, walls, _ = _plan(str(out), base, _stamp(base))
     rooms = data["layouts"][lay]
     grid = pd.read_csv(out / CSV_NAME.format(base), usecols=["point_id", "local_x", "local_y"])
 
@@ -174,23 +173,25 @@ with st.container(border=True):
     fig.add_trace(go.Scatter(x=grid["local_x"], y=grid["local_y"], mode="markers", name="격자점",
                              marker=dict(size=5, color="#cbd5e1"), hovertext=grid["point_id"], hoverinfo="text"))
     for i, r in enumerate(rooms):
-        x0, x1 = sorted((r["x0"], r["x1"]))
-        y0, y1 = sorted((r["y0"], r["y1"]))
-        fig.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1, line=dict(color="#2563eb", width=1.5),
-                      fillcolor="rgba(37,99,235,0.08)")
-        fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=f"<b>{r['name']}</b>", showarrow=False,
+        poly = L.room_poly(r)
+        ring = np.vstack([poly, poly[:1]])
+        fig.add_trace(go.Scatter(x=ring[:, 0], y=ring[:, 1], mode="lines", fill="toself", name="방 (정한 범위)",
+                                 legendgroup="rooms", showlegend=i == 0, line=dict(color="#2563eb", width=1.5),
+                                 fillcolor="rgba(37,99,235,0.08)", hoverinfo="text",
+                                 hovertext=f"{r['name']} · {L.poly_area(poly):.1f}㎡"))
+        c = L.label_point(poly)
+        fig.add_annotation(x=c[0], y=c[1], text=f"<b>{r['name']}</b>", showarrow=False,
                            font=dict(size=12, color="#1e3a8a"))
-    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name="방 (정한 범위)",  # 범례용
-                             line=dict(color="#2563eb", width=1.5)))
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white", dragmode="select",
                       legend=dict(orientation="h", y=1.02, x=0), height=560, selectdirection="any")
     fig.update_xaxes(showgrid=False, zeroline=False, title="건물 축 X (m)")
     fig.update_yaxes(showgrid=False, zeroline=False, title="건물 축 Y (m)", scaleanchor="x", scaleratio=1)
     ev = st.plotly_chart(fig, on_select="rerun", selection_mode="box", key=f"rooms_fig_{lay}_{ss.get('rooms_v', 0)}",
                          config={"scrollZoom": True, "displaylogo": False})
-    st.caption("검은 선 = 스캔에서 찾은 실제 벽 면 (참고용, 고칠 수 없음) · 파란 네모 = 내가 정한 방 (이 범위·이름이 도면에 들어가요) · "
-               "회색 점 = 격자점 (두께를 재는 자리). 자동 초안이 벽과 어긋나거나 빠진 방이 있으면, 그림에서 **마우스로 끌어 범위를 "
-               "고른 뒤** 이름을 넣어 방으로 추가하세요. 휠로 확대, 위쪽 도구의 손 모양으로 이동.")
+    st.caption("검은 선 = 스캔에서 찾은 실제 벽 면 (참고용, 고칠 수 없음) · 파란 영역 = 내가 정한 방 (이 범위·이름이 도면에 들어가요, "
+               "방끼리 겹치지 않아요) · 회색 점 = 격자점 (두께를 재는 자리). 빠진 방이 있으면 그림에서 **마우스로 끌어 범위를 고른 뒤** "
+               "이름을 넣어 추가하세요 — 이미 있는 방과 겹치는 부분은 빠지고 가까운 벽에 맞춰져요. 잘못 나뉜 방은 아래 표에서 지운 뒤 "
+               "다시 그리면 돼요. 휠로 확대, 위쪽 도구의 손 모양으로 이동.")
 
     box = (ev.selection.get("box") or [None])[-1] if ev and ev.selection else None
     if box:
@@ -201,24 +202,25 @@ with st.container(border=True):
             snap = st.checkbox("가까운 벽에 맞추기", value=True, key="rooms_snap")
             if st.button("방으로 추가", type="primary", icon=":material/add_box:", key="rooms_add",
                          disabled=not nm.strip()):
-                room = {"name": nm.strip(), "x0": round(bx[0], 3), "x1": round(bx[1], 3),
-                        "y0": round(by[0], 3), "y1": round(by[1], 3)}
-                rooms.append(L.snap_room(room, wx, wy) if snap else room)
-                _save()
-                ss.rooms_v = ss.get("rooms_v", 0) + 1
-                ss.pop("rooms_add_name", None)
-                st.rerun()
+                room = L.add_box_room(plan, rooms, nm.strip(), (bx[0], bx[1], by[0], by[1]), snap)
+                if room is None:
+                    st.warning("고른 범위가 이미 다른 방에 다 들어 있어요. 겹치는 방을 먼저 지우세요.", icon=":material/warning:")
+                else:
+                    rooms.append(room)
+                    _save()
+                    ss.rooms_v = ss.get("rooms_v", 0) + 1
+                    ss.pop("rooms_add_name", None)
+                    st.rerun()
         st.caption(f"고른 범위: X {bx[0]:.2f} ~ {bx[1]:.2f} m, Y {by[0]:.2f} ~ {by[1]:.2f} m")
 
-    st.markdown("**방 목록** — 이름·범위(m)를 바로 고칠 수 있어요. 줄 왼쪽을 골라 지우거나, 맨 아래 줄에 직접 더할 수 있어요.")
-    rdf = pd.DataFrame(rooms, columns=ROOM_COLS)
-    red = st.data_editor(rdf, hide_index=True, width="stretch", num_rows="dynamic",
+    st.markdown("**방 목록** — 이름을 바로 고칠 수 있어요. 줄 왼쪽 칸을 골라 휴지통으로 지워요 (방 추가는 그림에서).")
+    rdf = pd.DataFrame({"번호": range(len(rooms)), "이름": [r["name"] for r in rooms],
+                        "넓이(㎡)": [round(L.poly_area(L.room_poly(r)), 1) for r in rooms]})
+    red = st.data_editor(rdf, hide_index=True, width="stretch", num_rows="dynamic", disabled=["번호", "넓이(㎡)"],
                          key=f"rooms_tab_{lay}_{ss.get('rooms_v', 0)}",
-                         column_config={"name": st.column_config.TextColumn("이름", required=True),
-                                        **{c: st.column_config.NumberColumn(c.upper() + " (m)", format="%.2f")
-                                           for c in ROOM_COLS[1:]}})
-    new_rooms = [{"name": str(r["name"]).strip(), **{c: round(float(r[c]), 3) for c in ROOM_COLS[1:]}}
-                 for _, r in red.iterrows() if str(r["name"] or "").strip() and r[ROOM_COLS[1:]].notna().all()]
+                         column_config={"번호": None, "이름": st.column_config.TextColumn(required=True)})
+    new_rooms = [{**rooms[int(r["번호"])], "name": str(r["이름"]).strip()} for _, r in red.iterrows()
+                 if pd.notna(r["번호"]) and str(r["이름"] or "").strip()]
     if new_rooms != rooms:
         data["layouts"][lay] = new_rooms
         _save()
