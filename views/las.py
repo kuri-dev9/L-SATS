@@ -1,7 +1,7 @@
 """LAS 변환 화면: 층마다 한 개인 레이저 스캔 점군(LAS/LAZ)에서 같은 격자의 바닥·천장 높이 파일을 만든다.
 
 원본이 1GB 넘게 커서 올리지 않고, 프로그램이 도는 이 PC의 폴더에서 바로 읽는다 (slab/las.py).
-① 폴더 고르기(프로그램 안 폴더 탐색 + Windows 폴더 선택 창) → ② 변환할 파일 고르기 → ③ 변환 → ④ 결과 보기 → ⑤ 저장.
+① 폴더 고르기(이 PC 의 기본 폴더 선택 창: Windows 탐색기 / Mac Finder) → ② 변환할 파일 고르기 → ③ 변환 → ④ 결과 보기 → ⑤ 저장.
 마지막으로 연 폴더와 저장 폴더는 user_settings.json(ui)에 남겨 다음에 그 자리에서 이어 쓴다.
 미리보기 모드에서는 메뉴에 나오지 않는다.
 """
@@ -10,8 +10,9 @@ from __future__ import annotations
 import base64
 import io
 import os
-import string
+import shutil
 import subprocess
+import sys
 import zipfile
 from dataclasses import asdict
 from pathlib import Path
@@ -28,7 +29,6 @@ from views.shared import clear_files, job_settings, sidebar_status
 
 ss = st.session_state
 WINDOWS = os.name == "nt"
-MAX_DIRS = 300
 
 
 @st.cache_data(show_spinner=False, max_entries=500)
@@ -36,53 +36,116 @@ def _info(path: str, mtime: float, size: int) -> dict:
     return las_info(Path(path))
 
 
-@st.cache_data(show_spinner=False, ttl=30, max_entries=200)
-def _subdirs(folder: str) -> list[tuple[str, int]]:
-    """하위 폴더와 그 안의 LAS 파일 수 (숨김·권한 없는 폴더는 뺀다)."""
-    out = []
+# Windows: 탐색기와 같은 최신 폴더 선택 창(IFileOpenDialog). 안 되면 예전 FolderBrowserDialog 로.
+_WIN_PICKER = r"""
+using System;
+using System.Runtime.InteropServices;
+public static class LsatsFolderPicker {
+  [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")] class FileOpenDialogRCW {}
+  [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IFileDialog {
+    [PreserveSig] int Show(IntPtr parent);
+    void SetFileTypes(uint n, IntPtr spec);
+    void SetFileTypeIndex(uint i);
+    void GetFileTypeIndex(out uint i);
+    void Advise(IntPtr sink, out uint cookie);
+    void Unadvise(uint cookie);
+    void SetOptions(uint fos);
+    void GetOptions(out uint fos);
+    void SetDefaultFolder(IShellItem si);
+    void SetFolder(IShellItem si);
+    void GetFolder(out IShellItem si);
+    void GetCurrentSelection(out IShellItem si);
+    void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string name);
+    void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string name);
+    void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+    void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+    void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+    void GetResult(out IShellItem si);
+  }
+  [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IShellItem {
+    void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+    void GetParent(out IShellItem si);
+    void GetDisplayName(uint sigdn, [MarshalAs(UnmanagedType.LPWStr)] out string name);
+    void GetAttributes(uint mask, out uint attrs);
+    void Compare(IShellItem si, uint hint, out int order);
+  }
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+  static extern void SHCreateItemFromParsingName(string path, IntPtr pbc,
+      [MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IShellItem item);
+  public static string Pick(IntPtr owner, string title, string initial) {
+    IFileDialog d = (IFileDialog)new FileOpenDialogRCW();
+    uint fos; d.GetOptions(out fos);
+    d.SetOptions(fos | 0x20 | 0x40);  // FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM
+    d.SetTitle(title);
+    if (!String.IsNullOrEmpty(initial) && System.IO.Directory.Exists(initial)) {
+      try {
+        IShellItem start;
+        SHCreateItemFromParsingName(initial, IntPtr.Zero, typeof(IShellItem).GUID, out start);
+        d.SetFolder(start);
+      } catch {}
+    }
+    if (d.Show(owner) != 0) return null;  // 취소
+    IShellItem res; d.GetResult(out res);
+    string path; res.GetDisplayName(0x80058000, out path);  // SIGDN_FILESYSPATH
+    return path;
+  }
+}
+"""
+
+
+def native_pick(initial: str, title: str) -> str | None:
+    """이 PC 의 기본 폴더 선택 창(Windows 탐색기 창 / macOS Finder 창)을 띄워 고른 폴더를 돌려준다. 취소하면 None.
+
+    창은 프로그램이 도는 PC 화면에 뜬다. 창을 띄우지 못하면 RuntimeError.
+    """
+    initial = initial if initial and Path(initial).is_dir() else str(Path.home())
+    env = {**os.environ, "LSATS_INIT": initial, "LSATS_TITLE": title}
     try:
-        entries = sorted(os.scandir(folder), key=lambda e: e.name.lower())
-    except OSError:
-        return out
-    for e in entries:
-        if len(out) >= MAX_DIRS:
-            break
-        try:
-            if not e.is_dir() or e.name.startswith((".", "$")) or e.name == OUT_DIR:  # 작업 폴더는 숨긴다
-                continue
-            n = sum(1 for f in os.scandir(e.path) if f.is_file() and Path(f.name).suffix.lower() in LAS_TYPES)
-        except OSError:
-            continue
-        out.append((e.name, n))
-    return out
-
-
-def _drives() -> list[str]:
-    return [f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")] if WINDOWS else []
-
-
-def _windows_pick(initial: str) -> str | None:
-    """Windows 폴더 선택 창 (이 PC 화면에 뜬다). 취소하면 None."""
-    ps = (
-        "Add-Type -AssemblyName System.Windows.Forms\n"
-        "$f = New-Object System.Windows.Forms.Form -Property @{TopMost = $true; ShowInTaskbar = $false}\n"
-        "$d = New-Object System.Windows.Forms.FolderBrowserDialog\n"
-        "$d.Description = 'LAS / LAZ folder'\n"
-        "$d.SelectedPath = $env:LSATS_INIT\n"
-        "if ($d.ShowDialog($f) -eq [System.Windows.Forms.DialogResult]::OK) {\n"
-        "  [Console]::OutputEncoding = [Text.Encoding]::UTF8\n"
-        "  Write-Output $d.SelectedPath\n"
-        "}\n"
-    )
-    enc = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
-    try:
-        r = subprocess.run(["powershell", "-NoProfile", "-STA", "-EncodedCommand", enc], capture_output=True,
-                           env={**os.environ, "LSATS_INIT": initial}, timeout=900,
+        if WINDOWS:
+            ps = (
+                "Add-Type -AssemblyName System.Windows.Forms\n"
+                "[Console]::OutputEncoding = [Text.Encoding]::UTF8\n"
+                "$f = New-Object System.Windows.Forms.Form -Property @{TopMost = $true; ShowInTaskbar = $false}\n"
+                "try {\n"
+                "  Add-Type -TypeDefinition $env:LSATS_CS -Language CSharp\n"
+                "  $p = [LsatsFolderPicker]::Pick($f.Handle, $env:LSATS_TITLE, $env:LSATS_INIT)\n"
+                "} catch {\n"
+                "  $d = New-Object System.Windows.Forms.FolderBrowserDialog\n"
+                "  $d.Description = $env:LSATS_TITLE\n"
+                "  $d.SelectedPath = $env:LSATS_INIT\n"
+                "  $p = $null\n"
+                "  if ($d.ShowDialog($f) -eq [System.Windows.Forms.DialogResult]::OK) { $p = $d.SelectedPath }\n"
+                "}\n"
+                "if ($p) { Write-Output $p }\n"
+            )
+            enc = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+            cmd = ["powershell", "-NoProfile", "-STA", "-EncodedCommand", enc]
+            env["LSATS_CS"] = _WIN_PICKER
+        elif sys.platform == "darwin":
+            script = (
+                "on run argv\n"
+                "  activate\n"
+                "  try\n"
+                "    set f to choose folder with prompt (item 2 of argv) default location (POSIX file (item 1 of argv))\n"
+                "  on error number -128\n"  # 취소
+                "    return \"\"\n"
+                "  end try\n"
+                "  return POSIX path of f\n"
+                "end run"
+            )
+            cmd = ["osascript", "-e", script, initial, title]
+        elif shutil.which("zenity"):
+            cmd = ["zenity", "--file-selection", "--directory", f"--title={title}",
+                   f"--filename={initial.rstrip('/')}/"]
+        else:
+            raise RuntimeError("이 PC 에서는 폴더 선택 창을 띄울 수 없어요. 경로를 직접 붙여 넣어 주세요.")
+        r = subprocess.run(cmd, capture_output=True, env=env, timeout=900,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.SubprocessError):
-        return None
-    path = r.stdout.decode("utf-8", errors="replace").strip()
-    return path or None
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RuntimeError(f"폴더 선택 창을 띄우지 못했어요: {e}") from e
+    return r.stdout.decode("utf-8", errors="replace").strip() or None
 
 
 # ---------------------------------------------------------------- 폴더 이동 (마지막 폴더는 설정에 저장)
@@ -101,12 +164,12 @@ def _typed() -> None:
     _go(ss.las_path_in)
 
 
-def _up() -> None:
-    _go(str(Path(ss.las_dir).parent))
-
-
 def _pick_dialog() -> None:
-    picked = _windows_pick(ss.get("las_dir", ""))
+    try:
+        picked = native_pick(ss.get("las_dir", ""), "LAS·LAZ 파일이 든 폴더를 고르세요")
+    except RuntimeError as e:
+        ss._las_pick_error = str(e)
+        return
     if picked:
         _go(picked)
 
@@ -125,8 +188,6 @@ if "las_dir" not in ss:
     start = load_ui()["las_last_folder"]
     ss.las_dir = start if start and Path(start).is_dir() else str(Path.home())
     ss.las_path_in = ss.las_dir
-if ss.get("_las_goto"):  # 하위 폴더 목록에서 누른 폴더로 (입력 칸을 그리기 전에 옮긴다)
-    _go(ss.pop("_las_goto"))
 
 st.title("LAS 변환", icon=":material/grid_on:")
 st.caption("층마다 하나씩 있는 레이저 스캔 점군(LAS·LAZ)에서, 모든 층에 같은 격자를 놓고 격자점마다 바닥·천장 높이를 뽑아 "
@@ -137,30 +198,14 @@ with st.container(border=True):
     st.subheader("① 폴더 고르기", icon=":material/folder_open:")
     if ss.pop("_las_bad_path", None):
         st.warning("그 폴더를 찾지 못했어요. 경로를 다시 확인해 주세요.", icon=":material/warning:")
+    if err := ss.pop("_las_pick_error", None):
+        st.warning(err, icon=":material/warning:")
     with st.container(horizontal=True, vertical_alignment="bottom"):
         st.text_input("지금 폴더", key="las_path_in", on_change=_typed,
-                      help="경로를 붙여 넣고 Enter 를 누르거나, 아래 목록에서 폴더를 눌러 들어가세요. "
+                      help="「폴더 선택」으로 고르거나 경로를 붙여 넣고 Enter 를 누르세요. "
                            "마지막으로 연 폴더는 기억해 두었다가 다음에 바로 열어요.")
-        st.button("상위 폴더", icon=":material/arrow_upward:", on_click=_up, key="las_up",
-                  disabled=Path(ss.las_dir).parent == Path(ss.las_dir))
-        if WINDOWS:
-            st.button("폴더 선택 창", icon=":material/folder_open:", on_click=_pick_dialog, key="las_dialog",
-                      help="Windows 폴더 선택 창을 엽니다 (프로그램이 도는 이 PC 화면에 떠요).")
-    if WINDOWS:
-        drives = _drives()
-        if drives:
-            st.pills("드라이브", drives, key="las_drive", selection_mode="single",
-                     on_change=lambda: ss.get("las_drive") and _go(ss.las_drive))
-    dirs = _subdirs(ss.las_dir)
-    if dirs:
-        dtab = pd.DataFrame(dirs, columns=["하위 폴더", "LAS 파일"])
-        ev = st.dataframe(dtab, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-                          key=f"las_dirs_{ss.las_dir}", height=min(260, 38 + 35 * len(dtab)), alt="하위 폴더 목록",
-                          column_config={"LAS 파일": st.column_config.NumberColumn(width="small")})
-        if ev.selection.rows:
-            ss._las_goto = str(Path(ss.las_dir) / dtab.iloc[ev.selection.rows[0]]["하위 폴더"])
-            st.rerun()
-        st.caption("폴더를 누르면 그 안으로 들어가요. 'LAS 파일' 수가 있는 폴더가 점군이 든 폴더예요.")
+        st.button("폴더 선택", type="primary", icon=":material/folder_open:", on_click=_pick_dialog, key="las_dialog",
+                  help="이 PC 의 폴더 선택 창(Windows 탐색기 / Mac Finder)을 엽니다. 창은 프로그램이 도는 PC 화면에 떠요.")
     recursive = st.toggle("하위 폴더의 파일도 찾기", key="las_recursive")
 
 folder_p = Path(ss.las_dir)
@@ -282,8 +327,13 @@ with st.container(border=True):
         ss.las_save_dir = ss.pop("_las_save_goto")
     with st.container(horizontal=True, vertical_alignment="bottom"):
         st.text_input("저장할 폴더", key="las_save_dir", help="없는 폴더면 새로 만들어요. 마지막 저장 폴더를 기억해요.")
-        if WINDOWS and st.button("폴더 선택 창", icon=":material/folder_open:", key="las_save_dialog"):
-            picked = _windows_pick(ss.las_save_dir)
+        if st.button("폴더 선택", icon=":material/folder_open:", key="las_save_dialog",
+                     help="이 PC 의 폴더 선택 창(Windows 탐색기 / Mac Finder)을 엽니다."):
+            try:
+                picked = native_pick(ss.las_save_dir, "저장할 폴더를 고르세요")
+            except RuntimeError as e:
+                picked = None
+                st.warning(str(e), icon=":material/warning:")
             if picked:
                 ss._las_save_goto = picked
                 st.rerun()

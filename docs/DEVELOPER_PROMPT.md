@@ -21,8 +21,13 @@ test.bat         :: 자동 테스트 (모두 통과해야 함)
 git pull         :: 새 버전 받기. requirements.txt 가 바뀌었으면 run.bat 이 알아서 다시 설치
 ```
 
+현장 PC 확인 결과(2026-11-17): `py`·`python` 은 Microsoft Store 바로가기(WindowsApps)라 실행 실패, 실제 Python 3.15.2 는
+`%LOCALAPPDATA%\Python\bin\python.exe`(새 Python 설치 관리자). `run.bat`·`test.bat` 이 이런 설치 폴더도 찾도록 고침.
+3.15 에서 패키지 설치가 실패하면 `py install 3.13`(또는 python.org 3.13)을 깔고 `.venv` 를 지운 뒤 다시 실행.
+사용자는 개발자가 아니므로 명령 실행·문제 해결은 에이전트가 직접 하고, 사용자에게는 결과만 쉬운 말로 알린다.
+
 현장 PC에서 먼저 확인할 것 (macOS 에서는 확인하지 못한 것들):
-1. 「LAS 변환」의 **「폴더 선택 창」**(PowerShell FolderBrowserDialog, `views/las.py`의 `_windows_pick`) — 창이 뜨는지, 브라우저 뒤로 숨지 않는지, 한글 경로가 깨지지 않는지.
+1. 「LAS 변환」의 **「폴더 선택」**(PowerShell 로 탐색기식 IFileOpenDialog, 실패하면 FolderBrowserDialog. `views/las.py`의 `native_pick`) — 창이 뜨는지, 브라우저 뒤로 숨지 않는지, 한글 경로가 깨지지 않는지.
 2. 현장 LAS(층마다 1GB 안팎)로 변환 → 결과 표의 바닥면·천장면 높이, 층고, 건물 축(°)이 맞는지, 걸린 시간·메모리.
    102동 7F·8F 일부 구간(약 280 MB씩)으로는 macOS 에서 확인함: 건물 축 −16.47°(이 현장 DXF 정합 각도 −16.44°와 일치),
    바닥 35.114/천장 37.587 m(7F), 바닥 37.700/천장 40.182 m(8F), 두께 평균 113 mm, 1.9초·690 MB.
