@@ -356,3 +356,18 @@ def resolve_overlaps(plan: dict, rooms: list[dict]) -> list[dict]:
                 out.append({"name": r["name"], "poly": poly.tolist()})
         taken |= m
     return out[::-1]
+
+
+def clean_poly(poly) -> list[list[float]]:
+    """편집기에서 온 다각형 정리: 같은 점이 이어진 것(나누고 안 옮긴 자리 등)과 한 줄 위의 가운데 점을 뺀다."""
+    p = [[round(float(x), 3), round(float(y), 3)] for x, y in poly]
+    changed = True
+    while changed and len(p) > 3:
+        changed = False
+        for i in range(len(p)):
+            a, b, c = p[i - 1], p[i], p[(i + 1) % len(p)]
+            if b == a or abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-9:
+                del p[i]
+                changed = True
+                break
+    return p
