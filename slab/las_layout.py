@@ -192,8 +192,17 @@ def _orthogonal(p: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
     return np.round(np.array(out), 3)
 
 
+def _signed_area(p: np.ndarray) -> float:
+    x, y = p[:, 0], p[:, 1]
+    return float(0.5 * (np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+
+
 def _trace(mask: np.ndarray, plan: dict, xs: np.ndarray, ys: np.ndarray) -> np.ndarray | None:
-    """칸 덩어리 → 바깥 테두리 다각형 (건물 축 m, 가로·세로 변)."""
+    """칸 덩어리 → 테두리 다각형 (건물 축 m, 가로·세로 변).
+
+    안에 구멍(방에서 뺀 곳 등)이 있으면 구멍 테두리를 바깥 테두리와 가는 다리로 이어 한 줄(열쇠구멍 모양)로 만든다.
+    구멍은 바깥과 반대로 돌아서 점 포함 판정(matplotlib Path)·DXF 에서 방 밖으로 본다.
+    """
     import contourpy
 
     res, u0, v0 = plan["res"], plan["u0"], plan["v0"]
@@ -201,12 +210,50 @@ def _trace(mask: np.ndarray, plan: dict, xs: np.ndarray, ys: np.ndarray) -> np.n
     lines = contourpy.contour_generator(z=z, line_type="Separate").lines(0.5)
     if not lines:
         return None
-    ln = max(lines, key=len) - 1  # 가장 긴 선 = 바깥 테두리
-    pts = np.column_stack([u0 + (ln[:, 0] + 0.5) * res, v0 + (ln[:, 1] + 0.5) * res])
-    if np.allclose(pts[0], pts[-1]):
-        pts = pts[:-1]
-    pts = _simplify(np.vstack([pts, pts[:1]]), 0.12)[:-1]
-    return _orthogonal(pts, xs, ys) if len(pts) >= 3 else None
+
+    def ring(ln):
+        pts = np.column_stack([u0 + (ln[:, 0] - 1 + 0.5) * res, v0 + (ln[:, 1] - 1 + 0.5) * res])
+        if np.allclose(pts[0], pts[-1]):
+            pts = pts[:-1]
+        if len(pts) < 3 or abs(_signed_area(pts)) < 0.2:
+            return None
+        pts = _simplify(np.vstack([pts, pts[:1]]), 0.12)[:-1]
+        return _orthogonal(pts, xs, ys) if len(pts) >= 3 else None
+
+    rings = [r for r in (ring(ln) for ln in lines) if r is not None]
+    if not rings:
+        return None
+    rings.sort(key=lambda r: -abs(_signed_area(r)))
+    outer = rings[0]
+    if _signed_area(outer) < 0:
+        outer = outer[::-1]
+    for hole in rings[1:]:
+        if _signed_area(hole) > 0:
+            hole = hole[::-1]
+        # 다리: 구멍 꼭짓점에서 바깥 테두리 변으로 곧게(수직으로) 가장 짧게 잇는다
+        best = None
+        n = len(outer)
+        for j, h in enumerate(hole):
+            for e in range(n):
+                a, b = outer[e], outer[(e + 1) % n]
+                if abs(a[1] - b[1]) < 1e-9 and min(a[0], b[0]) < h[0] < max(a[0], b[0]):
+                    f, dist = np.array([h[0], a[1]]), abs(h[1] - a[1])
+                elif abs(a[0] - b[0]) < 1e-9 and min(a[1], b[1]) < h[1] < max(a[1], b[1]):
+                    f, dist = np.array([a[0], h[1]]), abs(h[0] - a[0])
+                else:
+                    continue
+                if best is None or dist < best[0]:
+                    best = (dist, e, f, j)
+        if best is None:  # 곧게 이을 곳이 없으면 가장 가까운 꼭짓점끼리
+            d = np.linalg.norm(outer[:, None, :] - hole[None, :, :], axis=2)
+            i, j = np.unravel_index(np.argmin(d), d.shape)
+            hole = np.roll(hole, -j, axis=0)
+            outer = np.vstack([outer[:i + 1], hole, hole[:1], outer[i:]])
+            continue
+        _, e, f, j = best
+        hole = np.roll(hole, -j, axis=0)
+        outer = np.vstack([outer[:e + 1], [f], hole, hole[:1], [f], outer[e + 1:]])  # 변 위 f → 구멍 한 바퀴 → f
+    return outer
 
 
 def _smooth(m: np.ndarray, res: float) -> np.ndarray:
@@ -366,8 +413,34 @@ def clean_poly(poly) -> list[list[float]]:
         changed = False
         for i in range(len(p)):
             a, b, c = p[i - 1], p[i], p[(i + 1) % len(p)]
-            if b == a or abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-9:
+            between = (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) > 0  # 되돌아가는 점(구멍 다리)은 둔다
+            if b == a or (between and abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-9):
                 del p[i]
                 changed = True
                 break
     return p
+
+
+def subtract_rect(plan: dict, rooms: list[dict], rect) -> list[dict]:
+    """네모(x0, x1, y0, y1)만큼 방들에서 뺀다. 방이 둘로 갈리면 큰 쪽은 원래 이름, 나머지는 '이름-2'… 로 남긴다."""
+    from scipy import ndimage
+
+    x0, x1 = sorted(rect[:2])
+    y0, y1 = sorted(rect[2:])
+    cut = rooms_mask(plan, [{"poly": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]}]) > 0
+    pts = np.vstack([room_poly(r) for r in rooms] + [np.array([[x0, y0], [x1, y1]])])
+    xs, ys = np.unique(pts[:, 0]), np.unique(pts[:, 1])  # 깎인 변은 네모 변·방 변에 맞춘다
+    out = []
+    for r in rooms:
+        m = rooms_mask(plan, [r]) > 0
+        if not (m & cut).any():
+            out.append(r)
+            continue
+        lab, n = ndimage.label(m & ~cut)
+        parts = sorted((lab == k for k in range(1, n + 1)), key=lambda a: -a.sum())
+        parts = [a for a in parts if a.sum() * plan["res"] ** 2 >= 0.3]
+        for i, a in enumerate(parts):
+            poly = _trace(a, plan, xs, ys)
+            if poly is not None:
+                out.append({"name": r["name"] if i == 0 else f"{r['name']}-{i + 1}", "poly": poly.tolist()})
+    return out

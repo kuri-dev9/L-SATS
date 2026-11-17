@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from slab.las import (
-    DXF_NAME, GRID_FILE, LAS_TYPES, OUT_DIR, GridSpec, LasParams, convert, export_results, find_las_files, floor_label,
+    DXF_NAME, GRID_FILE, LAS_TYPES, OUT_DIR, GridSpec, LasParams, convert, export_results, stored_result, find_las_files, floor_label,
     las_info,
 )
 from slab.settings_store import load_ui, update_ui
@@ -182,19 +182,33 @@ with st.container(border=True):
             update_ui(las_last_folder=str(folder_p))
 
 res = ss.get("las_result")
-if not res or res.get("folder") != str(folder_p):
-    sidebar_status()
-    st.stop()
+if not res or res.get("folder") != str(folder_p):  # 이 폴더를 전에 변환해 두었으면 다시 변환하지 않고 바로 보여 준다
+    stored = stored_result(out_dir)
+    if stored is None:
+        sidebar_status()
+        st.stop()
+    res = ss.las_result = {"folder": str(folder_p), "grid": stored["grid"], "summary": stored["rows"],
+                           "paths": stored["paths"], "labels": stored["labels"], "out": str(out_dir),
+                           "stored": stored["saved"], "current": stored["current"]}
 
 # ---------------------------------------------------------------- ④ 결과
 summary = pd.DataFrame(res["summary"])
 g = res["grid"]
 with st.container(border=True):
     st.subheader("④ 변환 결과", icon=":material/fact_check:")
-    st.success(f"{len(res['paths'])}개 층을 변환했어요. 격자 간격 {g['spacing_m']:g} m · 건물 축 {g['angle_deg']:g}° · "
-               f"{g['nx']} × {g['ny']} 칸 (모든 층 같은 격자)", icon=":material/check_circle:")
+    if res.get("stored") is not None:
+        st.info(f"전에 변환해 둔 결과를 불러왔어요 ({res['stored']}, {len(res['paths'])}개 층). 다시 변환하지 않아도 돼요. "
+                "LAS 파일을 바꿨거나 층을 더했다면 ③에서 변환을 누르세요 — 바뀐 층만 새로 해요.", icon=":material/history:")
+        if not res.get("current"):
+            st.warning("이 결과는 이전 버전 계산 방식으로 만들어졌어요 (예: 벽 위 격자점을 빼기 전). ③에서 한 번 다시 변환해 주세요.",
+                       icon=":material/update:")
+    else:
+        st.success(f"{len(res['paths'])}개 층을 변환했어요. 격자 간격 {g['spacing_m']:g} m · 건물 축 {g['angle_deg']:g}° · "
+                   f"{g['nx']} × {g['ny']} 칸 (모든 층 같은 격자)", icon=":material/check_circle:")
     st.dataframe(summary.drop(columns=["CSV", "도면"], errors="ignore"), hide_index=True, width="stretch", alt="층별 변환 결과")
-    st.caption("층고 = 천장면 − 바닥면. 바닥·천장 측정은 그 면의 점이 충분한 격자점 수예요.")
+    st.caption("층고 = 천장면 − 바닥면. 바닥·천장 측정은 그 면의 점이 충분한 격자점 수예요. "
+               "벽 위(빈 값) = 격자점이 벽 위에 놓여 슬라브 면을 잴 수 없어 값을 비운 점 (두께 분석에서 미산출). "
+               "변환 = 새로 변환 / 저장된 결과(LAS 파일이 그대로라 전에 만든 결과를 씀).")
     lab = st.selectbox("층별로 보기", res["labels"], key="las_view_floor")
     df = pd.read_csv(res["paths"][res["labels"].index(lab)])
     view = df.assign(**{"바닥 편차(mm)": (df["floor_error"] * 1000).round(1),

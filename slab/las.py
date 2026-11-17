@@ -43,6 +43,9 @@ SCAN_FRAC, SCAN_MIN, SCAN_SLICES = 0.05, 10_000_000, 400  # 1차 훑기 표본: 
 PLAN_RES = 0.05  # 평면도 칸 크기 (m)
 PLAN_MAX_CELLS = 30_000_000  # 평면도 칸 수 상한 (넘으면 칸을 키운다)
 WALL_Z = (1.0, 1.5)  # 벽 단면으로 볼 높이 (바닥면 기준, m)
+WALL_NODE_R, WALL_NODE_MIN = 0.1, 20  # 격자점 둘레 ±0.1 m 안에 벽 단면 점이 이만큼 있으면 '벽 위' → 바닥·천장 값을 비운다
+ALGO_VERSION = 2  # 결과를 다시 써도 되는지 판단 (계산 방식이 바뀌면 올린다)
+MANIFEST = "manifest.json"  # 변환 기록: 층마다 LAS 파일 크기·수정 시각·요약 (같은 파일은 다시 변환하지 않는다)
 
 
 @dataclass
@@ -353,6 +356,7 @@ def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None,
     raster = _PlanRaster(grid) if plan is not None else None
     wall_lo = scan.floor_level + WALL_Z[0]
     wall_hi = min(scan.floor_level + WALL_Z[1], scan.ceiling_level - 0.3)
+    wall_hits = np.zeros(nn, int)  # 격자점 바로 위(±WALL_NODE_R)를 지나는 벽 단면 점 수
     done = 0
     for x, y, z in iter_points(scan.path):
         lx, ly = grid.to_local(x, y)
@@ -362,6 +366,9 @@ def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None,
         i, j = np.floor(lx / s).astype(int), np.floor(ly / s).astype(int)
         inside = (i >= 0) & (i < grid.nx) & (j >= 0) & (j < grid.ny)
         inside &= (np.abs(lx - (i + 0.5) * s) <= half) & (np.abs(ly - (j + 0.5) * s) <= half)
+        on = (i >= 0) & (i < grid.nx) & (j >= 0) & (j < grid.ny) & (z >= wall_lo) & (z <= wall_hi)
+        on &= (np.abs(lx - (i + 0.5) * s) <= WALL_NODE_R) & (np.abs(ly - (j + 0.5) * s) <= WALL_NODE_R)
+        wall_hits += np.bincount((j * grid.nx + i)[on], minlength=nn)
         k = (j * grid.nx + i)[inside]
         zz = z[inside]
         count += np.bincount(k, minlength=nn)
@@ -382,6 +389,8 @@ def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None,
     nodes = nodes[nodes["buffer_points"] > 0].copy()  # 스캔 범위 밖 격자점은 뺀다
     f, c = fs.reindex(nodes["k"]), cs.reindex(nodes["k"])
     nf, nc = f["n"].fillna(0).to_numpy(), c["n"].fillna(0).to_numpy()
+    on_wall = wall_hits[nodes["k"].to_numpy()] >= WALL_NODE_MIN  # 벽이 덮은 자리: 슬라브 면을 잴 수 없다
+    nf, nc = np.where(on_wall, 0, nf), np.where(on_wall, 0, nc)
     floor_z = np.where(nf >= p.min_points, f["med"].to_numpy(), np.nan)
     ceil_z = np.where(nc >= p.min_points, c["med"].to_numpy(), np.nan)
     gf, gh = scan.floor_level, scan.ceiling_level
@@ -398,6 +407,7 @@ def sample_floor(scan: FloorScan, grid: GridSpec, p: LasParams, progress=None,
         "buffer_points": nodes["buffer_points"].to_numpy(),
         "is_empty": False, "has_floor": nf >= p.min_points, "has_ceiling": nc >= p.min_points,
         "floor_points": nf.astype(int), "ceiling_points": nc.astype(int),
+        "wall_points": wall_hits[nodes["k"].to_numpy()], "on_wall": on_wall,
         "grid_row": nodes["row"].to_numpy() + 1, "grid_col": nodes["col"].to_numpy() + 1,
         "local_x": nodes["local_x"].round(3).to_numpy(), "local_y": nodes["local_y"].round(3).to_numpy(),
         "grid_angle_deg": grid.angle_deg, "grid_origin_x": grid.origin_x, "grid_origin_y": grid.origin_y,
@@ -413,44 +423,102 @@ def floor_label(path: Path) -> str:
     return guess_floor(path.name) or path.stem
 
 
+def _stamp(f: Path) -> dict:
+    st = Path(f).stat()
+    return {"file": str(Path(f).resolve()), "size": st.st_size, "mtime": round(st.st_mtime, 3)}
+
+
+def load_manifest(out_dir: Path) -> dict:
+    m = Path(out_dir) / MANIFEST
+    try:
+        return json.loads(m.read_text(encoding="utf-8")) if m.exists() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def stored_result(out_dir: Path) -> dict | None:
+    """전에 변환해 둔 결과 (다시 변환하지 않고 바로 보기용). 없으면 None.
+    {grid, rows(층별 요약), paths(CSV), labels, saved, current(지금 계산 방식으로 만든 결과인지)}"""
+    out_dir = Path(out_dir)
+    man, grid = load_manifest(out_dir), GridSpec.load(out_dir / GRID_FILE)
+    floors = {lab: e for lab, e in man.get("floors", {}).items() if (out_dir / CSV_NAME.format(lab)).exists()}
+    if not floors or grid is None:
+        return None
+    order = sorted(floors, key=lambda lab: floors[lab]["row"].get("바닥면 높이(m)", 0))
+    return {"grid": asdict(grid), "rows": [floors[lab]["row"] for lab in order],
+            "paths": [str(out_dir / CSV_NAME.format(lab)) for lab in order], "labels": order,
+            "saved": man.get("saved", ""), "current": man.get("algo") == ALGO_VERSION}
+
+
 def convert(files: list[Path], out_dir: Path, params: LasParams | None = None, labels: dict | None = None,
             new_grid: bool = False, progress=None) -> tuple[GridSpec, pd.DataFrame, list[Path]]:
-    """LAS 들을 격자 CSV 로. progress(전체 진행 0~1, 글) 로 진행을 알린다. (격자, 층별 요약, CSV 경로들)."""
+    """LAS 들을 격자 CSV 로. progress(전체 진행 0~1, 글) 로 진행을 알린다. (격자, 층별 요약, CSV 경로들).
+
+    manifest.json 에 층마다 LAS 파일 크기·수정 시각과 요약을 남겨, 같은 파일·같은 설정·같은 격자면 다시 읽지 않고
+    전에 만든 결과를 쓴다 (요약의 '변환' 칸이 '저장된 결과').
+    """
+    import datetime
+
     p = params or LasParams()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     labels = labels or {}
-    n = len(files)
+    labs = [labels.get(f.name) or floor_label(f) for f in files]
+    man = load_manifest(out_dir)
+    grid = None if new_grid else GridSpec.load(out_dir / GRID_FILE)
+    if grid is not None and abs(grid.spacing_m - p.spacing_m) > 1e-9:
+        grid = None
+    same = (grid is not None and man.get("algo") == ALGO_VERSION and man.get("params") == asdict(p)
+            and man.get("grid") == asdict(grid))
+
+    def reusable(f, lab):
+        e = man.get("floors", {}).get(lab)
+        return same and e and e.get("stamp") == _stamp(f) and all(
+            (out_dir / n.format(lab)).exists() for n in (CSV_NAME, PLAN_NAME, DXF_NAME))
+
+    todo = [i for i, (f, lab) in enumerate(zip(files, labs)) if not reusable(f, lab)]
+    if grid is None:  # 격자를 새로 정하려면 모든 층을 훑어야 한다
+        todo = list(range(len(files)))
+    n = max(len(todo), 1)
     w1 = 0.15  # 1차 훑기(표본)는 2차보다 훨씬 짧다
     total = n * (1 + w1)
 
     def step(k, msg, wt=1.0):
         return (lambda f: progress((k + f * wt) / total, msg)) if progress else None
 
-    scans = []
-    for k, f in enumerate(files):
-        lab = labels.get(f.name) or floor_label(f)
-        scans.append(scan_floor(f, lab, step(k * w1, f"{lab}: 바닥·천장 높이와 건물 방향 찾는 중", w1)))
-    grid = None if new_grid else GridSpec.load(out_dir / GRID_FILE)
-    if grid is None or abs(grid.spacing_m - p.spacing_m) > 1e-9:
-        grid = make_grid(scans, p.spacing_m)
+    scans = {}
+    for k, i in enumerate(todo):
+        scans[i] = scan_floor(files[i], labs[i], step(k * w1, f"{labs[i]}: 바닥·천장 높이와 건물 방향 찾는 중", w1))
+    if grid is None:
+        grid = make_grid([scans[i] for i in todo], p.spacing_m)
         grid.save(out_dir / GRID_FILE)
+        man["floors"] = {}
+    floors = man.get("floors", {}) if same else {}
     rows, paths = [], []
-    for k, s in enumerate(scans):
+    for i, (f, lab) in enumerate(zip(files, labs)):
+        path = out_dir / CSV_NAME.format(lab)
+        paths.append(path)
+        if i not in scans:
+            rows.append({**floors[lab]["row"], "변환": "저장된 결과"})
+            continue
+        s = scans[i]
         plan: dict = {}
-        df = sample_floor(s, grid, p, step(n * w1 + k, f"{s.label}: 격자점 높이·평면도 뽑는 중"), plan=plan)
-        path = out_dir / CSV_NAME.format(s.label)
+        df = sample_floor(s, grid, p, step(n * w1 + todo.index(i), f"{s.label}: 격자점 높이·평면도 뽑는 중"), plan=plan)
         df.to_csv(path, index=False, encoding="utf-8")
         from .las_plan import plan_dxf
         np.savez_compressed(out_dir / PLAN_NAME.format(s.label), **plan)  # 방 배치 화면이 다시 쓴다
         (out_dir / DXF_NAME.format(s.label)).write_bytes(plan_dxf(df, plan, s.label))
-        paths.append(path)
-        rows.append({"층": s.label, "LAS 파일": s.path.name, "점 수": s.n_points,
-                     "바닥면 높이(m)": round(s.floor_level, 3), "천장면 높이(m)": round(s.ceiling_level, 3),
-                     "층고(m)": round(s.ceiling_level - s.floor_level, 3), "건물 축(°)": round(s.angle_deg, 2),
-                     "격자점": len(df), "바닥 측정": int(df["has_floor"].sum()),
-                     "천장 측정": int(df["has_ceiling"].sum()), "CSV": path.name,
-                     "도면": DXF_NAME.format(s.label)})
+        row = {"층": s.label, "LAS 파일": s.path.name, "점 수": s.n_points,
+               "바닥면 높이(m)": round(s.floor_level, 3), "천장면 높이(m)": round(s.ceiling_level, 3),
+               "층고(m)": round(s.ceiling_level - s.floor_level, 3), "건물 축(°)": round(s.angle_deg, 2),
+               "격자점": len(df), "바닥 측정": int(df["has_floor"].sum()),
+               "천장 측정": int(df["has_ceiling"].sum()), "벽 위(빈 값)": int(df["on_wall"].sum()),
+               "CSV": path.name, "도면": DXF_NAME.format(s.label)}
+        floors[lab] = {"stamp": _stamp(f), "row": row}
+        rows.append({**row, "변환": "새로 변환"})
+    man.update({"algo": ALGO_VERSION, "params": asdict(p), "grid": asdict(grid), "floors": floors,
+                "saved": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")})
+    (out_dir / MANIFEST).write_text(json.dumps(man, ensure_ascii=False, indent=1), encoding="utf-8")
     if progress:
         progress(1.0, "완료")
     return grid, pd.DataFrame(rows), paths

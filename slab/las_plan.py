@@ -165,7 +165,9 @@ def plan_figure(dxf_bytes: bytes, df: pd.DataFrame):
         return "-" if pd.isna(v) else f.format(v)
 
     hover = [f"<b>{r.point_id}</b><br>바닥 {fmt(r.floor_z, '{:.3f}')} m<br>천장 {fmt(r.ceiling_z, '{:.3f}')} m"
-             f"<br>층고 {fmt(r.height_mm, '{:.0f}')} mm" for r in df.itertuples(index=False)]
+             f"<br>층고 {fmt(r.height_mm, '{:.0f}')} mm"
+             + ("<br><b>벽 위 — 슬라브 면을 잴 수 없어 값을 비움</b>" if getattr(r, "on_wall", False) else "")
+             for r in df.itertuples(index=False)]
     ok = df["floor_z"].notna() & df["ceiling_z"].notna()
     fig.add_trace(go.Scatter(x=df["local_x"], y=df["local_y"], mode="markers+text", name="격자점",
                              text=df["point_id"], textposition="top right", textfont=dict(size=9, color="#64748b"),

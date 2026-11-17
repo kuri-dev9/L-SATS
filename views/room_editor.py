@@ -4,6 +4,8 @@
 - 옮길 때 가까운 벽 면(스캔에서 찾은 선)에 붙는다 (SNAP_PX 화면 픽셀 또는 0.15 m 안)
 - 빈 곳 끌기 = 새 방(직사각형), 「방 위에 새 방 그리기」(또는 Shift+끌기)면 이미 있는 방 위에도 그린다
 - 변 우클릭 → 「여기서 벽면 나누기」: 그 자리에 꼭짓점 두 개를 넣어 변을 둘로 나눈다 (한쪽만 끌면 ㄱ·ㄷ자로 꺾인다)
+  꺾인 곳 근처 변 우클릭 → 「벽면 합치기」: 짧은 쪽 변을 긴 쪽에 맞춰 다시 편다
+- 「방에서 빼기」를 켜고 끌면 그린 네모만큼 방에서 깎아 바로 저장한다 (Python: las_layout.subtract_rect)
 - 더블클릭 = 이름 바꾸기, Delete = 지우기, Ctrl+Z = 되돌리기, 오른쪽 버튼·Space+끌기 = 화면 이동, 휠 = 확대·축소
 - 새로 그리거나 마지막으로 고친 방을 목록 맨 뒤로 보내고, 저장할 때 겹친 칸은 뒤쪽 방이 갖는다 (las_layout.resolve_overlaps)
 편집은 브라우저 안에서만 하고 「저장」을 누를 때만 Python 으로 보낸다 (누를 때마다 보내면 화면 전체가 다시 실행되며 깜빡임).
@@ -20,6 +22,7 @@ HTML = """
   <canvas></canvas>
   <div class="bar">
     <button data-a="draw" title="켜면 이미 있는 방 위에도 새 방을 그릴 수 있어요 (Shift+끌기도 돼요). 겹친 부분은 새 방 쪽으로 정리돼요">＋ 방 위에 새 방 그리기</button>
+    <button data-a="cut" title="켜고 끌면 그린 네모만큼 방에서 빼요 (슬라브가 없는 곳 등). 바로 저장돼요">－ 방에서 빼기</button>
     <button data-a="rename" title="선택한 방 이름 바꾸기 (방 더블클릭도 돼요)">이름 바꾸기</button>
     <button data-a="del" title="선택한 방 지우기 (Delete 키)">방 지우기</button>
     <button data-a="undo" title="되돌리기 (Ctrl+Z)">↶ 되돌리기</button>
@@ -29,7 +32,7 @@ HTML = """
   </div>
   <div class="status"></div>
   <div class="menu"></div>
-  <div class="help">빈 곳 끌기 = 새 방 · 방 클릭 = 선택 · 방 안 끌기 = 이동 · 변 끌기 = 경계 이동 (벽에 붙어요) · 변 우클릭 = 벽면 나누기 · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
+  <div class="help">빈 곳 끌기 = 새 방 · 방 클릭 = 선택 · 방 안 끌기 = 이동 · 변 끌기 = 경계 이동 (벽에 붙어요) · 변 우클릭 = 벽면 나누기·합치기 · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
 </div>
 """
 
@@ -43,6 +46,7 @@ font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif}
 color:#1e293b;cursor:pointer}
 .bar button:hover{background:#eef3fa;border-color:#2563eb}
 .bar button.on{background:#2563eb;border-color:#2563eb;color:#fff}
+.bar button[data-a=cut].on{background:#dc2626;border-color:#dc2626}
 .bar button.save{font-weight:700}
 .bar button.save.dirty{background:#ea580c;border-color:#ea580c;color:#fff}
 .bar .sep{flex:1}
@@ -68,9 +72,9 @@ export default function(component) {
 function make(root) {
   const cv = root.querySelector('canvas'), ctx = cv.getContext('2d')
   const status = root.querySelector('.status'), saveBtn = root.querySelector('[data-a=save]')
-  const drawBtn = root.querySelector('[data-a=draw]')
+  const drawBtn = root.querySelector('[data-a=draw]'), cutBtn = root.querySelector('[data-a=cut]')
   const S = { z: 40, c: [0, 0], W: 0, H: 0, d: null, rooms: [], sel: -1, undo: [], dirty: false, draw: false,
-              drag: null, rev: null, fitted: false, hoverEdge: -1, trig: null }
+              drag: null, rev: null, fitted: false, hoverEdge: -1, trig: null, cut: false }
   const SNAP_PX = 12, SNAP_M = 0.15
 
   const toS = (x, y) => [S.W / 2 + (x - S.c[0]) * S.z, S.H / 2 - (y - S.c[1]) * S.z]
@@ -146,6 +150,42 @@ function make(root) {
     let best = null
     S.rooms.forEach((_, k) => { const h = edgeHit(k, sx, sy, 9); if (h && (!best || h.d < best.d)) best = { k, ...h } })
     return best
+  }
+  function cleanPoly(p) {  // 같은 점·한 줄 위 가운데 점 빼기
+    let changed = true
+    while (changed && p.length > 4) {
+      changed = false
+      for (let i = 0; i < p.length; i++) {
+        const a = p[(i - 1 + p.length) % p.length], b = p[i], c = p[(i + 1) % p.length]
+        const same = Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9
+        const between = (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) > 0  // 되돌아가는 점(구멍 다리)은 둔다
+        const col = between && Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-9
+        if (same || col) { p.splice(i, 1); changed = true; break }
+      }
+    }
+    return p
+  }
+  function stepAt(k, i) {  // 변 i 또는 그 이웃 중 '꺾인 턱'(양옆 변이 서로 나란하고 이 변과 직각)인 변 번호
+    const p = S.rooms[k].poly, n = p.length
+    const dir = j => { const a = p[(j + n) % n], b = p[(j + 1 + n) % n]; return Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? 'h' : 'v' }
+    for (const c of [i, i - 1, i + 1]) {
+      const cc = (c + n) % n
+      if (dir(cc - 1) === dir(cc + 1) && dir(cc - 1) !== dir(cc)) return cc
+    }
+    return -1
+  }
+  function merge(k, c) {  // 턱 c 를 없앤다: 양옆 나란한 두 변 중 짧은 쪽을 긴 쪽 높이(위치)에 맞춘다
+    const p = S.rooms[k].poly, n = p.length
+    const ia = (c - 1 + n) % n, ib = (c + 1) % n
+    const len = j => Math.hypot(p[(j + 1) % n][0] - p[j][0], p[(j + 1) % n][1] - p[j][1])
+    const horizA = Math.abs(p[(ia + 1) % n][1] - p[ia][1]) < 1e-9
+    const ax = horizA ? 1 : 0
+    const [keep, move] = len(ia) >= len(ib) ? [ia, ib] : [ib, ia]
+    const v = p[keep][ax]
+    pushUndo()
+    p[move][ax] = v; p[(move + 1) % n][ax] = v
+    S.rooms[k].poly = cleanPoly(p)
+    S.sel = k; S.mark = null; changed()
   }
   function split(k, i, t) {  // 방 k 의 변 i 를 t(0~1) 자리에서 둘로: 같은 점 두 개를 넣어, 한쪽만 끌면 그 사이가 꺾인다
     const p = S.rooms[k].poly, a = p[i], b = p[(i + 1) % p.length]
@@ -232,15 +272,17 @@ function make(root) {
     // 새 방 그리는 중
     if (S.drag && S.drag.t === 'new') {
       const [a, b] = [toS(...S.drag.a), toS(...S.drag.b)]
-      ctx.setLineDash([5, 4]); ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 1.5
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = S.drag.cut ? '#dc2626' : '#16a34a'; ctx.lineWidth = 1.5
+      if (S.drag.cut) { ctx.fillStyle = 'rgba(220,38,38,0.12)'; ctx.fillRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])) }
       ctx.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]))
       ctx.setLineDash([])
     }
     const sel = S.sel >= 0 ? `선택: ${S.rooms[S.sel].name} (${area(S.rooms[S.sel].poly).toFixed(1)}㎡)` : '방을 클릭해 고르세요'
-    status.textContent = (S.draw ? '새 방 그리기: 끌어서 범위를 정하세요 (방 위에도 돼요) · ' : '') + sel +
+    status.textContent = (S.cut ? '방에서 빼기: 뺄 범위를 끌어서 그리세요 · ' : S.draw ? '새 방 그리기: 끌어서 범위를 정하세요 (방 위에도 돼요) · ' : '') + sel +
                          (S.dirty ? ' · 저장 안 한 변경이 있어요' : '')
     saveBtn.classList.toggle('dirty', S.dirty)
     drawBtn.classList.toggle('on', S.draw)
+    cutBtn.classList.toggle('on', S.cut)
   }
 
   function pushUndo() { S.undo.push(copy(S.rooms)); if (S.undo.length > 50) S.undo.shift() }
@@ -276,6 +318,7 @@ function make(root) {
       S.drag = { t: 'pan', s: [sx, sy], c: [...S.c], right: e.button === 2, moved: false }; return
     }
     S.mark = null
+    if (S.cut) { S.drag = { t: 'new', a: w, b: w, cut: true }; return }
     if (S.draw || e.shiftKey) { S.drag = { t: 'new', a: w, b: w }; return }
     const ei = edgeAt(sx, sy)
     if (ei >= 0) { pushUndo(); S.drag = { t: 'edge', i: ei, s: w, o: copy(S.rooms[S.sel].poly), moved: false }; return }
@@ -323,6 +366,13 @@ function make(root) {
     if (d.t === 'new') {
       let [x0, x1] = [d.a[0], d.b[0]].sort((a, b) => a - b), [y0, y1] = [d.a[1], d.b[1]].sort((a, b) => a - b)
       x0 = snapV(x0, S.d.wx); x1 = snapV(x1, S.d.wx); y0 = snapV(y0, S.d.wy); y1 = snapV(y1, S.d.wy)
+      if (d.cut) {
+        if ((x1 - x0) * (y1 - y0) >= 0.05 && S.trig) {
+          S.cut = false
+          S.trig('save', { rooms: S.rooms, cut: [x0, x1, y0, y1].map(r3), t: Date.now() }); S.dirty = false
+        }
+        draw(); return
+      }
       if ((x1 - x0) * (y1 - y0) >= 0.3) {
         const name = window.prompt('새 방 이름 (예: 2호_침실1)', nextName())
         if (name && name.trim()) {
@@ -344,7 +394,11 @@ function make(root) {
   function hideMenu() { menu.style.display = 'none' }
   function showMenu(sx, sy) {
     const items = [], eh = edgeAtAny(sx, sy), k = roomAt(...toW(sx, sy))
-    if (eh) items.push(['여기서 벽면 나누기', () => split(eh.k, eh.i, eh.t)])
+    if (eh) {
+      items.push(['여기서 벽면 나누기', () => split(eh.k, eh.i, eh.t)])
+      const c = stepAt(eh.k, eh.i)
+      if (c >= 0) items.push(['벽면 합치기 (꺾인 곳 펴기)', () => merge(eh.k, c)])
+    }
     const rk = eh ? eh.k : k
     if (rk >= 0) {
       items.push([`'${S.rooms[rk].name}' 이름 바꾸기`, () => { S.sel = rk; rename(rk) }])
@@ -373,12 +427,13 @@ function make(root) {
   root.addEventListener('keydown', e => {
     if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel >= 0) { e.preventDefault(); del(S.sel) }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo() }
-    else if (e.key === 'Escape') { hideMenu(); S.draw = false; S.sel = -1; draw() }
+    else if (e.key === 'Escape') { hideMenu(); S.draw = false; S.cut = false; S.sel = -1; draw() }
   })
   function undo() { if (S.undo.length) { S.rooms = S.undo.pop(); S.sel = -1; S.dirty = true; draw() } }
   root.querySelector('.bar').addEventListener('click', e => {
     const a = e.target.closest('button')?.dataset.a
-    if (a === 'draw') { S.draw = !S.draw; draw() }
+    if (a === 'draw') { S.draw = !S.draw; S.cut = false; draw() }
+    else if (a === 'cut') { S.cut = !S.cut; S.draw = false; draw() }
     else if (a === 'rename') rename(S.sel)
     else if (a === 'del') del(S.sel)
     else if (a === 'undo') undo()
