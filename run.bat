@@ -64,7 +64,10 @@ if defined SPID (
 call :prepare || exit /b 1
 if not exist ".run" mkdir ".run"
 echo Starting Slab Thickness Analyzer in the background...
-powershell -NoProfile -Command "Start-Process -FilePath '%CD%\.venv\Scripts\python.exe' -WorkingDirectory '%CD%' -ArgumentList '-m streamlit run app.py --server.headless true --server.port %LSATS_PORT%%ARGS%' -WindowStyle Hidden -RedirectStandardOutput '%CD%\%LOG%' -RedirectStandardError '%CD%\.run\server.err.log'" || goto :startfail
+rem serve.cmd writes the log itself; Start-Process without redirection uses ShellExecute, so the
+rem hidden server does not inherit this window's output handles (callers reading our output would wait forever)
+> ".run\serve.cmd" echo @"%CD%\.venv\Scripts\python.exe" -m streamlit run app.py --server.headless true --server.port %LSATS_PORT%%ARGS% ^> "%CD%\%LOG%" 2^>^&1
+powershell -NoProfile -Command "$q = [char]34; Start-Process -FilePath cmd.exe -ArgumentList ('/c ' + $q + '%CD%\.run\serve.cmd' + $q) -WorkingDirectory '%CD%' -WindowStyle Hidden" || goto :startfail
 set /a N=0
 :wait
 set /a N+=1
@@ -132,7 +135,7 @@ call :show_log
 exit /b 0
 
 :show_log
-powershell -NoProfile -Command "foreach ($f in '%LOG%', '.run\server.err.log') { if (Test-Path $f) { Get-Content $f -Tail 30 } }"
+powershell -NoProfile -Command "Get-Content '%LOG%' -Tail 30"
 exit /b 0
 
 rem ---- helpers
