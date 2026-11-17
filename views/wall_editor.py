@@ -8,6 +8,10 @@
 - 고른 직선 + 숫자 + Enter = 마우스에 가까운 끝 쪽으로 그만큼(mm) 늘이기 (앞에 - 를 치면 줄이기).
 - 곡선 벽: 시작점 → 끝점 → 휘는 정도 클릭.
 - 오른쪽 위 칸: 고른 벽의 두께·길이(mm)를 바로 입력 (두께는 새 벽의 기본값도 된다).
+- 복제(Ctrl+D): 고른 벽의 기준점 클릭 → 놓을 곳 클릭(여러 번, 숫자+Enter = 마우스 쪽으로 그 거리), Esc = 끝.
+  Ctrl+C / Ctrl+V = 복사해 두었다가 마우스 위치에 붙여 넣기.
+- 간격 띄우기: 고른 벽·선과 나란히 정한 거리(mm)만큼 떨어진 복사본 (숫자+Enter 로 거리, 놓을 쪽 클릭).
+- 90° 돌리기(R), 재기(M: 두 점 클릭 = 거리·가로·세로).
 - Delete = 지우기, Ctrl+Z = 되돌리기, 오른쪽 버튼·Space+끌기 = 화면 이동, 휠 = 확대.
 배경: 스캔에서 찾은 벽 면(검은 가는 선)과 격자점. 편집은 브라우저 안에서만 하고 「저장」 때만 Python 으로 보낸다.
 """
@@ -26,6 +30,10 @@ HTML = """
     <button data-t="line" title="직선 벽: 시작점 클릭 → 끝점 클릭. 그리는 중 숫자+Enter = 길이(mm)">／ 직선 벽</button>
     <button data-t="arc" title="곡선 벽: 시작점 → 끝점 → 휘는 정도 클릭">◠ 곡선 벽</button>
     <button data-t="seg" title="선(두께 없는 벽 면 선): 시작점 클릭 → 끝점 클릭. 그리는 중 숫자+Enter = 길이(mm)">─ 선</button>
+    <button data-t="copy" title="복제 (Ctrl+D): 기준점 클릭 → 놓을 곳 클릭 (여러 번, 숫자+Enter = 그 거리). Esc = 끝">⧉ 복제</button>
+    <button data-t="offset" title="간격 띄우기: 고른 벽·선과 나란히 거리(mm)만큼 떨어진 복사본. 숫자+Enter = 거리, 놓을 쪽 클릭">⇉ 간격 띄우기</button>
+    <button data-a="rot" title="고른 벽을 가운데를 축으로 90° 돌리기 (R)">⟳ 90°</button>
+    <button data-t="measure" title="재기 (M): 두 점 클릭 = 거리·가로·세로">📏 재기</button>
     <button data-a="del" title="고른 벽 지우기 (Delete)">지우기</button>
     <button data-a="undo" title="되돌리기 (Ctrl+Z)">↶ 되돌리기</button>
     <button data-a="fit" title="전체 보기">전체 보기</button>
@@ -37,7 +45,7 @@ HTML = """
     <label>길이 <input data-f="len" type="number" min="10" step="10"> mm</label>
   </div>
   <div class="status"></div>
-  <div class="help">벽·선 클릭 = 고르기 · 고른 뒤 숫자+Enter = 그만큼 늘이기(- 줄이기) · 끌기 = 이동 · □ 끝점 끌기 = 길이·방향 (다른 벽 끝에 붙고 수평·수직은 딱 맞춤, Shift = 자유) · ◇ = 곡선 휘기 · 그리는 중 숫자+Enter = 길이(mm) · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
+  <div class="help">벽·선 클릭 = 고르기 · 고른 뒤 숫자+Enter = 그만큼 늘이기(- 줄이기) · Ctrl+D 복제 · Ctrl+C/V 복사·붙여넣기 · R 90° 돌리기 · M 재기 · 끌기 = 이동 · □ 끝점 끌기 = 길이·방향 (다른 벽 끝에 붙고 수평·수직은 딱 맞춤, Shift = 자유) · ◇ = 곡선 휘기 · 그리는 중 숫자+Enter = 길이(mm) · 오른쪽 버튼 끌기 또는 Space+끌기 = 화면 이동 · 휠 = 확대</div>
 </div>
 """
 
@@ -46,8 +54,8 @@ CSS = """
 background:#fff;outline:none;touch-action:none;user-select:none;
 font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif}
 .we canvas{position:absolute;inset:0;width:100%;height:100%;cursor:default}
-.bar{position:absolute;left:8px;top:8px;display:flex;flex-wrap:wrap;gap:4px;max-width:calc(100% - 240px)}
-.bar button{font:inherit;font-size:12px;padding:4px 9px;border:1px solid #dde4ee;border-radius:7px;background:rgba(255,255,255,.94);
+.bar{position:absolute;left:8px;top:8px;display:flex;flex-wrap:wrap;gap:4px;pointer-events:none;max-width:calc(100% - 240px)}
+.bar button{pointer-events:auto;font:inherit;font-size:12px;padding:4px 9px;border:1px solid #dde4ee;border-radius:7px;background:rgba(255,255,255,.94);
 color:#1e293b;cursor:pointer}
 .bar button:hover{background:#eef3fa;border-color:#2563eb}
 .bar button.on{background:#2563eb;border-color:#2563eb;color:#fff}
@@ -77,7 +85,7 @@ function make(root) {
   const status = root.querySelector('.status'), saveBtn = root.querySelector('[data-a=save]')
   const tIn = root.querySelector('[data-f=t]'), lenIn = root.querySelector('[data-f=len]')
   const S = { z: 40, c: [0, 0], W: 0, H: 0, d: null, walls: [], sel: -1, undo: [], dirty: false, tool: 'select',
-              drag: null, rev: null, fitted: false, draft: null, typed: '', defT: 0.2, mouse: [0, 0], self: null }
+              drag: null, rev: null, fitted: false, draft: null, typed: '', defT: 0.2, mouse: [0, 0], self: null, op: null, offD: null, clip: null }
   const SNAP_PX = 10, ORTHO_DEG = 6
   const toS = (x, y) => [S.W / 2 + (x - S.c[0]) * S.z, S.H / 2 - (y - S.c[1]) * S.z]
   const toW = (sx, sy) => [S.c[0] + (sx - S.W / 2) / S.z, S.c[1] - (sy - S.H / 2) / S.z]
@@ -172,6 +180,44 @@ function make(root) {
     return p
   }
 
+  // ---- 복제·간격 띄우기·돌리기
+  function shifted(w, dx, dy) {
+    const c = copy(w)
+    for (const k of ['a', 'b', 'm']) if (c[k]) c[k] = P([c[k][0] + dx, c[k][1] + dy])
+    return c
+  }
+  const midOf = w => w.k === 'arc' ? [...w.m] : [(w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2]
+  function offsetWall(w, p, d) {  // p 쪽으로 d(m) 떨어진 나란한 복사본 (곡선은 같은 중심의 원)
+    const A = w.k === 'arc' ? arcInfo(w) : null, c = copy(w)
+    if (A) {
+      const s = Math.hypot(p[0] - A.c[0], p[1] - A.c[1]) > A.r ? 1 : -1
+      if (s < 0 && d >= A.r - 0.01) return null
+      for (const k of ['a', 'b', 'm']) {
+        const q = w[k], L = Math.hypot(q[0] - A.c[0], q[1] - A.c[1]) || 1
+        c[k] = P([q[0] + (q[0] - A.c[0]) / L * s * d, q[1] + (q[1] - A.c[1]) / L * s * d])
+      }
+      return c
+    }
+    const dx = w.b[0] - w.a[0], dy = w.b[1] - w.a[1], L = Math.hypot(dx, dy) || 1, n = [-dy / L, dx / L]
+    const s = ((p[0] - w.a[0]) * n[0] + (p[1] - w.a[1]) * n[1]) >= 0 ? 1 : -1
+    return shifted(w, n[0] * s * d, n[1] * s * d)
+  }
+  const offD = () => S.offD || S.defT
+  function rotateSel() {
+    if (S.sel < 0) return
+    const w = S.walls[S.sel], [cx, cy] = midOf(w)
+    pushUndo()
+    for (const k of ['a', 'b', 'm']) if (w[k]) w[k] = P([cx - (w[k][1] - cy), cy + (w[k][0] - cx)])
+    changed()
+  }
+  function placeCopy(dx, dy) {
+    pushUndo(); S.walls.push(shifted(S.op.src, dx, dy)); S.op.last = S.walls.length - 1; changed()
+  }
+  function endOp() {  // 복제·재기 끝: 고르기로 (마지막 복사본이 있으면 그것을 고른 채)
+    if (S.op && S.op.last != null) S.sel = S.op.last
+    S.op = null; S.tool = 'select'; S.typed = ''; draw()
+  }
+
   // ---- 그리기
   function strokeWall(w, style, extra = 0) {
     ctx.strokeStyle = style; ctx.lineWidth = (w.t > 0 ? Math.max(2, w.t * S.z) : 1.4) + extra; ctx.lineCap = 'butt'
@@ -209,10 +255,39 @@ function make(root) {
       ctx.fillStyle = '#166534'; ctx.font = '700 12px sans-serif'; ctx.textAlign = 'left'
       ctx.fillText(`${Math.round(Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]) * 1000)} mm`, mx + 10, my - 10)
     }
-    const tool = { select: '고르기', line: '직선 벽', arc: '곡선 벽', seg: '선' }[S.tool]
-    const step = S.draft ? (S.draft.k === 'arc' ? (S.draft.b ? '휘는 정도를 클릭하세요' : '끝점을 클릭하세요') : '끝점을 클릭하거나 길이(mm)를 치고 Enter · Esc = 끝')
+    if (S.tool === 'copy' && S.op) {  // 복제: 기준점에서 마우스까지 옮긴 자리에 미리보기
+      const b = S.op.base
+      if (b) {
+        const m = S.mouseW || b, [bx, by] = toS(...b)
+        ctx.setLineDash([6, 4]); strokeWall(shifted(S.op.src, m[0] - b[0], m[1] - b[1]), 'rgba(22,163,74,0.55)')
+        ctx.strokeStyle = 'rgba(22,163,74,0.8)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(...toS(...m)); ctx.stroke(); ctx.setLineDash([])
+        ctx.fillStyle = '#16a34a'; ctx.beginPath(); ctx.arc(bx, by, 4, 0, 6.3); ctx.fill()
+        const [mx, my] = toS(...m)
+        ctx.fillStyle = '#166534'; ctx.font = '700 12px sans-serif'; ctx.textAlign = 'left'
+        ctx.fillText(`${Math.round(Math.hypot(m[0] - b[0], m[1] - b[1]) * 1000)} mm`, mx + 10, my - 10)
+      }
+    }
+    if (S.tool === 'offset' && S.sel >= 0 && S.mouseW) {
+      const g = offsetWall(S.walls[S.sel], S.mouseW, offD())
+      if (g) { ctx.setLineDash([6, 4]); strokeWall(g, 'rgba(22,163,74,0.55)'); ctx.setLineDash([]) }
+    }
+    if (S.tool === 'measure' && S.op && S.op.a) {
+      const a = S.op.a, b = S.op.b || S.mouseW || a, [ax, ay] = toS(...a), [bx, by] = toS(...b)
+      ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3])
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.setLineDash([])
+      ctx.fillStyle = '#7c3aed'
+      for (const [x, y] of [[ax, ay], [bx, by]]) { ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 6.3); ctx.fill() }
+      const mm = v => Math.round(v * 1000)
+      ctx.font = '700 12px sans-serif'; ctx.textAlign = 'left'
+      ctx.fillText(`${mm(Math.hypot(b[0] - a[0], b[1] - a[1]))} mm (가로 ${mm(Math.abs(b[0] - a[0]))} · 세로 ${mm(Math.abs(b[1] - a[1]))})`, (ax + bx) / 2 + 8, (ay + by) / 2 - 8)
+    }
+    const tool = { select: '고르기', line: '직선 벽', arc: '곡선 벽', seg: '선', copy: '복제', offset: '간격 띄우기', measure: '재기' }[S.tool]
+    const step = S.tool === 'copy' ? (S.op && S.op.base ? '놓을 곳을 클릭하세요 (여러 번 됨) · 숫자+Enter = 마우스 쪽으로 그 거리(mm) · Esc = 끝' : '기준점을 클릭하세요 (벽 끝에 붙어요)')
+               : S.tool === 'offset' ? `거리 ${Math.round(offD() * 1000)} mm — 놓을 쪽을 클릭하세요 (숫자+Enter = 그 거리로 마우스 쪽에) · Esc = 그만`
+               : S.tool === 'measure' ? (S.op && S.op.a && !S.op.b ? '두 번째 점을 클릭하세요' : '첫 점을 클릭하세요 (벽 끝에 붙어요) · Esc = 끝')
+               : S.draft ? (S.draft.k === 'arc' ? (S.draft.b ? '휘는 정도를 클릭하세요' : '끝점을 클릭하세요') : '끝점을 클릭하거나 길이(mm)를 치고 Enter · Esc = 끝')
                          : S.tool === 'select' ? (S.sel >= 0 ? `${S.walls[S.sel].t > 0 ? '벽' : '선'} 고름 — 숫자를 치고 Enter = 마우스 쪽 끝으로 그만큼 늘이기(- 는 줄이기)` : '벽·선을 클릭해 고르세요') : '시작점을 클릭하세요'
-    const typedMsg = S.typed ? (S.draft ? ` · 입력한 길이 ${S.typed} mm (Enter)` : ` · ${S.typed} mm ${S.typed.startsWith('-') ? '줄이기' : '늘이기'} (Enter, Esc = 취소)`) : ''
+    const typedMsg = S.typed ? (S.draft || S.tool === 'copy' || S.tool === 'offset' ? ` · 입력한 거리 ${S.typed} mm (Enter)` : ` · ${S.typed} mm ${S.typed.startsWith('-') ? '줄이기' : '늘이기'} (Enter, Esc = 취소)`) : ''
     status.textContent = `${tool}: ${step}` + typedMsg +
                          ` · 벽 ${S.walls.length}개` + (S.dirty ? ' · 저장 안 한 변경이 있어요' : '')
     saveBtn.classList.toggle('dirty', S.dirty)
@@ -229,7 +304,13 @@ function make(root) {
 
   function pushUndo() { S.undo.push(copy(S.walls)); if (S.undo.length > 80) S.undo.shift() }
   function changed() { S.dirty = true; draw() }
-  function setTool(t) { S.tool = t; S.draft = null; S.typed = ''; if (t !== 'select') S.sel = -1; draw() }
+  function setTool(t) {
+    if ((t === 'copy' || t === 'offset') && S.sel < 0) { window.alert('먼저 고르기로 벽이나 선을 클릭해 고르세요.'); return }
+    S.tool = t; S.draft = null; S.typed = ''
+    S.op = t === 'copy' ? { src: copy(S.walls[S.sel]), base: null } : t === 'measure' ? { a: null, b: null } : null
+    if (!['select', 'copy', 'offset'].includes(t)) S.sel = -1
+    draw()
+  }
 
   const pos = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] }
   let space = false
@@ -239,6 +320,20 @@ function make(root) {
     root.focus(); cv.setPointerCapture(e.pointerId)
     const [sx, sy] = pos(e), w = toW(sx, sy)
     if (e.button !== 0 || space) { S.drag = { t: 'pan', s: [sx, sy], c: [...S.c] }; return }
+    if (S.tool === 'copy') {
+      if (!S.op.base) { S.op.base = P(snapPoint(w, null, e.shiftKey)); S.mouseW = S.op.base; draw(); return }
+      const t = snapPoint(w, S.op.base, e.shiftKey); placeCopy(t[0] - S.op.base[0], t[1] - S.op.base[1]); return
+    }
+    if (S.tool === 'offset') {
+      const g = S.sel >= 0 ? offsetWall(S.walls[S.sel], w, offD()) : null
+      if (!g) { window.alert('그 거리로는 안쪽에 띄울 수 없어요.'); return }
+      addWall(g); S.tool = 'select'; draw(); return
+    }
+    if (S.tool === 'measure') {
+      const p = P(snapPoint(w, S.op.a && !S.op.b ? S.op.a : null, e.shiftKey))
+      if (!S.op.a || S.op.b) S.op = { a: p, b: null }; else S.op.b = p
+      draw(); return
+    }
     if (S.tool !== 'select') {
       const d = S.draft
       if (!d) { S.draft = { k: S.tool, a: P(snapPoint(w, null, e.shiftKey)) }; S.typed = ''; draw(); return }
@@ -262,6 +357,10 @@ function make(root) {
     S.mouseW = w
     if (!d) {
       if (S.draft && !S.draft.b) S.mouseW = snapPoint(w, S.draft.a, e.shiftKey)
+      if (S.tool === 'copy' || (S.tool === 'measure' && !(S.op.a && S.op.b))) {
+        const from = S.tool === 'copy' ? S.op.base : S.op.a
+        S.mouseW = snapPoint(w, from, e.shiftKey)
+      }
       cv.style.cursor = space ? 'grab' : S.tool !== 'select' ? 'crosshair' : handleAt(sx, sy) ? 'crosshair' : wallAt(w) >= 0 ? 'move' : 'default'
       draw(); return
     }
@@ -310,16 +409,38 @@ function make(root) {
     pushUndo(); w[end] = P([o[0] + (p[0] - o[0]) / L * nl, o[1] + (p[1] - o[1]) / L * nl]); changed()
   }
   function addWall(w) { pushUndo(); S.walls.push(w); S.sel = S.walls.length - 1; changed() }
-  function del() { if (S.sel < 0) return; pushUndo(); S.walls.splice(S.sel, 1); S.sel = -1; changed() }
-  function undo() { if (S.undo.length) { S.walls = S.undo.pop(); S.sel = -1; S.dirty = true; draw() } }
+  function del() { if (S.sel < 0) return; S.tool = 'select'; S.op = null; pushUndo(); S.walls.splice(S.sel, 1); S.sel = -1; changed() }
+  function undo() { if (S.undo.length) { S.walls = S.undo.pop(); S.sel = -1; S.tool = 'select'; S.op = null; S.typed = ''; S.dirty = true; draw() } }
 
   root.addEventListener('keydown', e => {
     if (e.target === tIn || e.target === lenIn) return
     if (e.code === 'Space') { space = true; e.preventDefault(); return }
-    const typing = (S.draft && !S.draft.b) || (S.tool === 'select' && S.sel >= 0)
-    if (typing && (/^[0-9]$/.test(e.key) || (e.key === '-' && !S.typed && !S.draft))) { S.typed += e.key; e.preventDefault(); draw(); return }
+    const mod = e.ctrlKey || e.metaKey, key = e.key.toLowerCase()
+    if (mod && key === 'd') { e.preventDefault(); if (S.sel >= 0) setTool('copy'); return }
+    if (mod && key === 'c' && S.sel >= 0) { e.preventDefault(); S.clip = copy(S.walls[S.sel]); status.textContent = '복사했어요 — Ctrl+V 로 붙여 넣기'; return }
+    if (mod && key === 'v' && S.clip) {  // 붙여 넣기: 복사한 벽의 가운데가 마우스를 따라오고 클릭한 곳에 놓임
+      e.preventDefault(); S.tool = 'copy'; S.draft = null; S.typed = ''
+      S.op = { src: copy(S.clip), base: P(midOf(S.clip)) }; draw(); return
+    }
+    const typing = (S.draft && !S.draft.b) || (S.tool === 'select' && S.sel >= 0) || (S.tool === 'copy' && S.op.base) || S.tool === 'offset'
+    if (typing && (/^[0-9]$/.test(e.key) || (e.key === '-' && !S.typed && !S.draft && S.tool === 'select'))) { S.typed += e.key; e.preventDefault(); draw(); return }
     if (S.typed && e.key === 'Backspace') { S.typed = S.typed.slice(0, -1); e.preventDefault(); draw(); return }
-    if (!S.draft && S.sel >= 0 && S.typed && e.key === 'Enter') {  // 고른 벽 + 숫자 + Enter = 그만큼 늘이기
+    if (S.tool === 'copy' && S.op.base && S.typed && e.key === 'Enter') {  // 마우스 쪽(수평·수직 맞춤)으로 그 거리만큼 복제
+      e.preventDefault()
+      const b = S.op.base, m = S.mouseW || [b[0] + 1, b[1]], L = Math.hypot(m[0] - b[0], m[1] - b[1]) || 1, d = Number(S.typed) / 1000
+      S.typed = ''
+      if (d > 0) placeCopy((m[0] - b[0]) / L * d, (m[1] - b[1]) / L * d); else draw()
+      return
+    }
+    if (S.tool === 'offset' && S.typed && e.key === 'Enter') {  // 거리를 정하고 마우스 쪽에 바로 띄움
+      e.preventDefault(); const d = Number(S.typed) / 1000; S.typed = ''
+      if (!(d > 0)) { draw(); return }
+      S.offD = d
+      const g = offsetWall(S.walls[S.sel], S.mouseW || S.walls[S.sel].a, d)
+      if (!g) { window.alert('그 거리로는 안쪽에 띄울 수 없어요.'); draw(); return }
+      addWall(g); S.tool = 'select'; draw(); return
+    }
+    if (S.tool === 'select' && !S.draft && S.sel >= 0 && S.typed && e.key === 'Enter') {  // 고른 벽 + 숫자 + Enter = 그만큼 늘이기
       e.preventDefault(); const v = Number(S.typed); S.typed = ''
       if (v) extendSel(v); else draw()
       return
@@ -333,7 +454,15 @@ function make(root) {
       S.draft.b = b
       draw(); return
     }
-    if (e.key === 'Escape') { if (S.typed) S.typed = ''; else if (S.draft) S.draft = null; else { S.tool = 'select'; S.sel = -1 } draw(); return }
+    if (e.key === 'Escape') {
+      if (S.typed) S.typed = ''
+      else if (S.draft) S.draft = null
+      else if (['copy', 'offset', 'measure'].includes(S.tool)) return endOp()
+      else { S.tool = 'select'; S.sel = -1 }
+      draw(); return
+    }
+    if (!mod && key === 'r' && S.tool === 'select' && S.sel >= 0) { e.preventDefault(); rotateSel(); return }
+    if (!mod && key === 'm' && !S.draft) { e.preventDefault(); setTool('measure'); return }
     if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel >= 0) { e.preventDefault(); del(); return }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo() }
   })
@@ -357,6 +486,7 @@ function make(root) {
     if (b.dataset.t) return setTool(b.dataset.t)
     const a = b.dataset.a
     if (a === 'del') del()
+    else if (a === 'rot') { if (S.sel >= 0) rotateSel(); else window.alert('먼저 돌릴 벽을 고르세요.') }
     else if (a === 'undo') undo()
     else if (a === 'fit') { fit(); draw() }
     else if (a === 'save' && S.trig) { S.trig('save', { walls: S.walls, t: Date.now() }); S.dirty = false; draw() }
@@ -369,7 +499,7 @@ function make(root) {
       root.style.setProperty('--h', d.h + 'px')
       const first = !S.d
       S.d = d
-      if (d.rev !== S.rev) { S.rev = d.rev; S.walls = copy(d.walls); S.undo = []; S.dirty = false; S.sel = -1; S.draft = null }
+      if (d.rev !== S.rev) { S.rev = d.rev; S.walls = copy(d.walls); S.undo = []; S.dirty = false; S.sel = -1; S.draft = null; S.op = null; S.tool = 'select' }
       if (d.defT && first) S.defT = d.defT
       if (first || d.fitKey !== S.fitKey) { S.fitKey = d.fitKey; S.fitted = false; if (S.W) fit() }
       draw()

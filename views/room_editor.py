@@ -41,8 +41,8 @@ CSS = """
 background:#fff;outline:none;touch-action:none;user-select:none;
 font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif}
 .re canvas{position:absolute;inset:0;width:100%;height:100%;cursor:grab}
-.bar{position:absolute;left:8px;top:8px;display:flex;flex-wrap:wrap;gap:4px;max-width:calc(100% - 16px)}
-.bar button{font:inherit;font-size:12px;padding:4px 9px;border:1px solid #dde4ee;border-radius:7px;background:rgba(255,255,255,.94);
+.bar{position:absolute;left:8px;top:8px;display:flex;flex-wrap:wrap;gap:4px;pointer-events:none;max-width:calc(100% - 16px)}
+.bar button{pointer-events:auto;font:inherit;font-size:12px;padding:4px 9px;border:1px solid #dde4ee;border-radius:7px;background:rgba(255,255,255,.94);
 color:#1e293b;cursor:pointer}
 .bar button:hover{background:#eef3fa;border-color:#2563eb}
 .bar button.on{background:#2563eb;border-color:#2563eb;color:#fff}
