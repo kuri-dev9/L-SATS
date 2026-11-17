@@ -1,4 +1,4 @@
-# 개발 인계 프롬프트 (v0.3.0)
+# 개발 인계 프롬프트 (v0.4.1)
 
 > 다른 개발자나 AI 개발 도구에 그대로 전달하는 프롬프트입니다. 먼저 `AGENTS.md`와 `README.md`를 읽게 하세요.
 
@@ -9,7 +9,35 @@
 Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요. 먼저 `AGENTS.md`와 `README.md`를 읽고,
 `python -m pytest`로 기준 상태(모두 통과)를 확인한 뒤 시작하세요.
 
-## 0. v0.3.0에서 바뀐 것 (현장 요청)
+## 현장 PC(Windows)에서 이어 받기
+
+이 저장소는 현장 Windows PC(VS Code + Git + Codex)에서 직접 실행·개발합니다. 현장 LAS·CSV·DXF 원본은 그 PC에만 있고 커밋하지 않습니다.
+
+```bat
+git clone https://github.com/kuri-dev9/L-SATS.git
+cd L-SATS
+run.bat          :: 처음엔 .venv 를 만들고 패키지 설치(1~3분) → http://localhost:8501
+test.bat         :: 자동 테스트 (모두 통과해야 함)
+git pull         :: 새 버전 받기. requirements.txt 가 바뀌었으면 run.bat 이 알아서 다시 설치
+```
+
+현장 PC에서 먼저 확인할 것 (macOS 에서는 확인하지 못한 것들):
+1. 「LAS 변환」의 **「폴더 선택 창」**(PowerShell FolderBrowserDialog, `views/las.py`의 `_windows_pick`) — 창이 뜨는지, 브라우저 뒤로 숨지 않는지, 한글 경로가 깨지지 않는지.
+2. 현장 LAS(층마다 1GB 안팎)로 변환 → 결과 표의 바닥면·천장면 높이, 층고, 건물 축(°)이 맞는지, 걸린 시간·메모리.
+   102동 7F·8F 일부 구간(약 280 MB씩)으로는 macOS 에서 확인함: 건물 축 −16.47°(이 현장 DXF 정합 각도 −16.44°와 일치),
+   바닥 35.114/천장 37.587 m(7F), 바닥 37.700/천장 40.182 m(8F), 두께 평균 113 mm, 1.9초·690 MB.
+3. 변환 결과를 「두께 분석으로 보내기」→ 측정점 위치도가 건물 축에 맞춰 반듯하게 그려지는지.
+4. 저장(층마다/한 파일, CSV/엑셀)한 파일을 Windows Excel 에서 열어 한글이 깨지지 않는지.
+
+## 0. v0.4.x 에서 바뀐 것
+- v0.4.0 LAS 변환: 층별 점군 → 모든 층 같은 격자(`grid.json`)의 바닥·천장 Z CSV, 건물 축 자동 정렬(`core.grid_alignment`), `LAS_TO_GRID.bat`.
+- v0.4.1 LAS 변환 화면: 프로그램 안 폴더 탐색 + Windows 폴더 선택 창, 체크한 파일만 변환, 결과(요약·격자점 그림·표),
+  저장(층마다/한 파일, CSV/엑셀), 마지막 연 폴더·저장 폴더 기억(`user_settings.json`의 `ui`).
+- `run.bat`: `requirements.txt`가 바뀌면 다시 설치.
+- 남은 과제: LAS 격자 점 번호(`G001-001`)는 기존 DXF 측정점 라벨(P001…)과 달라 **LAS 결과는 방별로 나누지 못함**(층 전체로만).
+  방별이 필요하면 DXF(측량 좌표로 그렸거나 라벨이 있는 것)와 LAS 격자를 맞추는 방법을 정해야 함.
+
+## 0-1. v0.3.0에서 바뀐 것 (현장 요청)
 - **135mm 통과/미달 판정 삭제** — 목적은 현황 파악. 측정점마다 결과 상태: 산출 완료 / 두께 범위 검토(≥140) / 이상치 검토(같은 방 5점 이상, MAD 3.5배) /
   두께 비정상(하한 이하, ≤0) / 미산출(대응점 없음·Z값 확인 필요) / 영역 외. 기준은 현장에서 받은 결과 엑셀(7F/6F)을 역산해 맞춤(이상치 규칙은 그 파일과 4/4 일치).
 - **여러 층 한꺼번에**(`slab/batch.py`): 파일 안의 바닥 높이로 층 순서, 바로 아래층과 짝, 도면은 이름의 층 → 공용 → 좌표 일치 순으로 배정. 100개 층까지 고려.
@@ -21,8 +49,7 @@ Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요
 - 미리보기 모드(설정 맨 아래): 꾸밈 없는 화면 `views/preview.py`, 결과 파일은 동일.
 - 새 접속 시 마지막 작업 자동 열기, 「새 분석」은 항상 새 작업. 내려받기 함수는 `memo` 캐시(ScriptRunContext 경고 방지).
 - 시험용 여러 층 파일: `tools/make_test_floors.py` → `test_floors/`(커밋 안 함).
-- LAS 변환(`slab/las.py`·`views/las.py`·`LAS_TO_GRID.bat`): 층별 점군 → 같은 격자 높이 CSV, 건물 축 자동 정렬. 실제 현장 LAS 로는 아직 확인 못 함
-  (가상 점군 `tools/make_demo_las.py`로만 검증). 현장 파일에서 바닥·천장면 찾기와 건물 축 찾기가 맞는지 먼저 확인할 것.
+- (v0.4) LAS 변환은 위 '현장 PC' 절 참고. 가상 점군은 `tools/make_demo_las.py`.
 
 ## 1. v0.2.0 때 상태 (아래 판정 관련 내용은 v0.3.0에서 바뀜)
 
@@ -67,6 +94,7 @@ Windows 배포(`packaging/`, `.github/workflows/`)가 깨지지 않게 하세요
 ## 3. 남은 일
 1. 담당자 확인 대기(`pending=True`): TIN 삼각형 최대 변 길이, 두께 하한·상한(요청값 "140 mm"의 의미 — 판정 기준과 별개).
 2. Windows 실기기에서 휴대용 ZIP 확인: 첫 실행, 작업 내역 저장 위치, `UPDATE.bat` 뒤 `work_history`·`user_settings.json` 유지, 한글 파일 이름.
+   (GitHub Actions Windows 빌드에서 압축 풀기·UPDATE·START.bat·LAS 변환까지는 자동 확인함)
 3. 엑셀 위치도 40%와 인쇄 PDF를 Windows Excel·브라우저에서 눈으로 확인.
 4. 작업 내역이 많아질 때(수백 건) 목록 속도와 디스크 사용량 점검, 필요하면 오래된 작업 정리 기능.
 5. `views/report.py` 미리보기 폭은 1.1 : 3 비율 — 실제 화면에서 사용자 확인 필요.

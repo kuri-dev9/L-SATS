@@ -6,13 +6,19 @@ cd /d "%~dp0"
 
 call :find_python || goto :nopython
 
-if not exist ".venv\installed.ok" (
-    echo [1/2] Creating virtual environment and installing packages - first run only, 1-3 minutes...
+rem Install packages on first run, and again whenever requirements.txt changes (e.g. after git pull)
+set "NEED="
+if not exist ".venv\installed.ok" set "NEED=1"
+if not exist ".venv\requirements.txt" set "NEED=1"
+if not defined NEED fc /b requirements.txt ".venv\requirements.txt" >nul 2>nul || set "NEED=1"
+if defined NEED (
+    echo [1/2] Installing packages - first run or new packages, 1-3 minutes...
     if not exist ".venv\Scripts\python.exe" (
         %PY% -m venv .venv || goto :fail
     )
     ".venv\Scripts\python.exe" -m pip install --upgrade pip || goto :fail
     ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :fail
+    copy /y requirements.txt ".venv\requirements.txt" >nul
     echo ok> ".venv\installed.ok"
 )
 
