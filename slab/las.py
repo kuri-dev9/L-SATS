@@ -504,6 +504,8 @@ def convert(files: list[Path], out_dir: Path, params: LasParams | None = None, l
         s = scans[i]
         plan: dict = {}
         df = sample_floor(s, grid, p, step(n * w1 + todo.index(i), f"{s.label}: 격자점 높이·평면도 뽑는 중"), plan=plan)
+        from .las_layout import drop_excluded
+        df = drop_excluded(out_dir, s.label, df)  # 실무자가 뺀 점은 다시 변환해도 빠진 채로
         df.to_csv(path, index=False, encoding="utf-8")
         from .las_plan import plan_dxf
         np.savez_compressed(out_dir / PLAN_NAME.format(s.label), **plan)  # 방 배치 화면이 다시 쓴다

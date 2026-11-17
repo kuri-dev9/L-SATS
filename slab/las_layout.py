@@ -444,3 +444,63 @@ def subtract_rect(plan: dict, rooms: list[dict], rect) -> list[dict]:
             if poly is not None:
                 out.append({"name": r["name"] if i == 0 else f"{r['name']}-{i + 1}", "poly": poly.tolist()})
     return out
+
+
+# ------------------------------------------------------------------ 실무자가 뺀 격자점
+EXCLUDE_FILE = "excluded.json"  # {층: {point_id: CSV 한 줄(되살릴 때 씀)}}
+
+
+def load_excluded(out_dir: Path) -> dict:
+    p = Path(out_dir) / EXCLUDE_FILE
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def drop_excluded(out_dir: Path, label: str, df: pd.DataFrame) -> pd.DataFrame:
+    """뺀 점을 CSV 에서 지운다 (다시 변환해도 계속 빠지게 convert 가 부른다)."""
+    ids = set(load_excluded(out_dir).get(label, {}))
+    return df[~df["point_id"].isin(ids)] if ids else df
+
+
+def _rebuild_dxf(out_dir: Path, label: str, df: pd.DataFrame) -> None:
+    from .las_plan import plan_dxf
+
+    data = load_layouts(out_dir)
+    rooms = data["layouts"].get(data["floors"].get(label, ""), [])
+    (Path(out_dir) / DXF_NAME.format(label)).write_bytes(plan_dxf(df, load_plan(out_dir, label) or {}, label, rooms))
+
+
+def exclude_points(out_dir: Path, label: str, ids: list[str]) -> int:
+    """격자점을 결과에서 뺀다: CSV·도면에서 지우고(두께 분석에도 안 들어감) 원래 줄은 excluded.json 에 둔다."""
+    out_dir = Path(out_dir)
+    path = out_dir / CSV_NAME.format(label)
+    df = pd.read_csv(path)
+    hit = df[df["point_id"].isin(ids)]
+    if hit.empty:
+        return 0
+    ex = load_excluded(out_dir)
+    ex.setdefault(label, {}).update({r["point_id"]: r for r in json.loads(hit.to_json(orient="records"))})
+    (out_dir / EXCLUDE_FILE).write_text(json.dumps(ex, ensure_ascii=False, indent=1), encoding="utf-8")
+    df = df[~df["point_id"].isin(ids)]
+    df.to_csv(path, index=False, encoding="utf-8")
+    _rebuild_dxf(out_dir, label, df)
+    return len(hit)
+
+
+def restore_points(out_dir: Path, label: str, ids: list[str]) -> int:
+    """뺀 격자점을 되살린다."""
+    out_dir = Path(out_dir)
+    ex = load_excluded(out_dir)
+    rows = [ex.get(label, {}).pop(i) for i in ids if i in ex.get(label, {})]
+    if not rows:
+        return 0
+    path = out_dir / CSV_NAME.format(label)
+    df = pd.read_csv(path)
+    df = pd.concat([df, pd.DataFrame(rows)[df.columns.intersection(pd.DataFrame(rows).columns)]], ignore_index=True)
+    df = df.sort_values("point_number").reset_index(drop=True)
+    df.to_csv(path, index=False, encoding="utf-8")
+    (out_dir / EXCLUDE_FILE).write_text(json.dumps(ex, ensure_ascii=False, indent=1), encoding="utf-8")
+    _rebuild_dxf(out_dir, label, df)
+    return len(rows)

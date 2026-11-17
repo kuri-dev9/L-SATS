@@ -28,7 +28,7 @@ REMOTE = st.context.ip_address is not None  # 다른 PC 에서 접속 (localhost
 
 
 @st.cache_data(show_spinner=False, max_entries=20)
-def _plan_fig(dxf_path: str, mtime: float, csv_path: str):
+def _plan_fig(dxf_path: str, mtime: float, csv_path: str, csv_mtime: float = 0.0):
     from slab.las_plan import plan_figure
 
     from slab.las_layout import load_plan
@@ -219,8 +219,42 @@ with st.container(border=True):
                         "천장 편차(mm)": (df["ceiling_error"] * 1000).round(1)})
     dxf = Path(res["out"]) / DXF_NAME.format(lab)
     if dxf.exists():
-        st.plotly_chart(_plan_fig(str(dxf), dxf.stat().st_mtime, res["paths"][res["labels"].index(lab)]),
-                        config={"scrollZoom": True, "displaylogo": False}, height=560, key=f"las_plan_{lab}")
+        csv_p = Path(res["paths"][res["labels"].index(lab)])
+        ev = st.plotly_chart(_plan_fig(str(dxf), dxf.stat().st_mtime, str(csv_p), csv_p.stat().st_mtime),
+                             config={"scrollZoom": True, "displaylogo": False}, height=560,
+                             key=f"las_plan_{lab}_{ss.get('las_ex_v', 0)}", on_select="rerun",
+                             selection_mode=("points", "box", "lasso"))
+        picked = []
+        for pt in (ev.selection.get("points", []) if ev and ev.selection else []):
+            cd = pt.get("customdata")
+            cd = cd[0] if isinstance(cd, list) and cd else cd
+            if isinstance(cd, str) and cd not in picked:
+                picked.append(cd)
+        with st.container(horizontal=True, vertical_alignment="center"):
+            if picked:
+                st.markdown(f"고른 점: **{', '.join(picked)}**")
+            else:
+                st.caption("불필요한 점은 그림에서 클릭해 고르세요 (여러 개: Shift+클릭, 또는 위쪽 도구의 박스 선택).")
+            if st.button(f"고른 점 빼기 ({len(picked)}개)", icon=":material/delete:", key="las_ex_go", disabled=not picked,
+                         help="고른 격자점을 결과(CSV·도면·두께 분석)에서 뺍니다. 다시 변환해도 빠진 채로 있고, 아래에서 되살릴 수 있어요."):
+                from slab.las_layout import exclude_points
+
+                k = exclude_points(Path(res["out"]), lab, picked)
+                ss.las_ex_v = ss.get("las_ex_v", 0) + 1
+                ss._las_ex_msg = f"{lab}: {k}개 점을 뺐어요 ({', '.join(picked)})."
+                st.rerun()
+        if msg := ss.pop("_las_ex_msg", None):
+            st.success(msg, icon=":material/check_circle:")
+        from slab.las_layout import load_excluded, restore_points
+
+        gone = sorted(load_excluded(Path(res["out"])).get(lab, {}))
+        if gone:
+            with st.expander(f"뺀 점 {len(gone)}개 — 되살리기"):
+                back = st.multiselect("되살릴 점", gone, key=f"las_ex_back_{lab}_{ss.get('las_ex_v', 0)}")
+                if st.button("되살리기", icon=":material/undo:", key="las_ex_restore", disabled=not back):
+                    restore_points(Path(res["out"]), lab, back)
+                    ss.las_ex_v = ss.get("las_ex_v", 0) + 1
+                    st.rerun()
         st.caption("평면도 미리보기 (DXF 와 같은 내용): 검은 선 = 스캔된 벽 면(바닥 위 1.0~1.5 m 단면, 칸막이벽은 두 줄·외벽은 안쪽 면 한 줄), "
                    "회색 띠 = 벽(칸막이벽은 두 면 사이, 외벽은 바깥쪽으로 추정 두께만큼), 빨간 점 = 바닥·천장을 모두 잰 격자점(빈 동그라미는 한쪽만). "
                    "값이 없는 자리(벽 위·건물 밖)의 점은 그리지 않아요. 휠로 확대, 끌어서 이동, 점에 마우스를 올리면 높이가 보여요.")
