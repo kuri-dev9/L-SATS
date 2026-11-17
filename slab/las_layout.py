@@ -3,7 +3,8 @@
 LAS 로 만든 층은 모두 같은 격자(건물 축 좌표)라서, 한 구조에서 정한 방을 같은 구조의 다른 층에 그대로 씌울 수 있다.
 배치는 작업 폴더(LSATS_grid)의 layouts.json 에 둔다:
     {"layouts": {"구조 A": [{"name": "2호_침실1", "poly": [[x, y], ...]}, ...]},
-     "floors": {"7F": "구조 A", ...}}
+     "floors": {"7F": "구조 A", ...}, "walls": {"구조 A": [...]}, "cad": {"구조 A": {...}}}
+("cad" = 기본 도면을 LAS 벽에 맞춘 자리, slab/cad_fit.py)
 방은 서로 겹치지 않는 다각형(가로·세로 변), 좌표는 건물 축 좌표(m, CSV 의 local_x/local_y 와 같음).
 """
 from __future__ import annotations
@@ -50,6 +51,45 @@ def similarity(a: dict, b: dict) -> float:
     hit = (wa & db).sum() + (wb & da).sum()
     tot = wa.sum() + wb.sum()
     return float(hit / tot) if tot else 0.0
+
+
+STRUCT_KEYS = ("layouts", "walls", "cad")  # 구조 이름을 열쇠로 쓰는 항목
+
+
+def split_structure(data: dict, floors: list[str], name: str, rooms: list[dict] | None = None) -> None:
+    """고른 층들을 새 구조로 뗀다. 방·벽·도면 맞춤은 첫 층의 지금 구조 것을 복사한다 (rooms 를 주면 그 방으로)."""
+    import copy
+
+    src = data["floors"].get(floors[0])
+    for k in STRUCT_KEYS:
+        if src in data.get(k, {}):
+            data.setdefault(k, {})[name] = copy.deepcopy(data[k][src])
+    data["layouts"].setdefault(name, [])
+    if rooms is not None:
+        data["layouts"][name] = rooms
+    for f in floors:
+        data["floors"][f] = name
+
+
+def merge_structures(data: dict, keep: str, others: list[str]) -> None:
+    """others 구조의 층을 keep 구조로 옮기고 others 를 지운다 (방·벽은 keep 것을 쓴다)."""
+    for f, s in list(data["floors"].items()):
+        if s in others:
+            data["floors"][f] = keep
+    for o in others:
+        if o != keep:
+            for k in STRUCT_KEYS:
+                data.get(k, {}).pop(o, None)
+
+
+def rename_structure(data: dict, old: str, new: str) -> None:
+    for k in STRUCT_KEYS:
+        d = data.get(k, {})
+        if old in d:
+            data[k] = {(new if n == old else n): v for n, v in d.items()}
+    for f, s in list(data["floors"].items()):
+        if s == old:
+            data["floors"][f] = new
 
 
 def group_floors(out_dir: Path, labels: list[str]) -> tuple[list[list[str]], pd.DataFrame]:
@@ -324,8 +364,9 @@ def load_layouts(out_dir: Path) -> dict:
     p = Path(out_dir) / LAYOUT_FILE
     if p.exists():
         d = json.loads(p.read_text(encoding="utf-8"))
-        return {"layouts": d.get("layouts", {}), "floors": d.get("floors", {}), "walls": d.get("walls", {})}
-    return {"layouts": {}, "floors": {}, "walls": {}}
+        return {"layouts": d.get("layouts", {}), "floors": d.get("floors", {}), "walls": d.get("walls", {}),
+                "cad": d.get("cad", {})}
+    return {"layouts": {}, "floors": {}, "walls": {}, "cad": {}}
 
 
 def save_layouts(out_dir: Path, data: dict) -> None:

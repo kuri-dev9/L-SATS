@@ -34,6 +34,15 @@ HTML = """
     <button data-l="off" title="점 글자 끄기">글자 끄기</button>
     <button data-l="value" title="두께만 (확대하면 보여요)">두께</button>
     <button data-l="full" title="번호 + 두께 (더 확대하면 보여요)">번호+두께</button>
+    <span class="sep"></span>
+    <select class="ptsel" title="점 보이기·숨기기">
+      <option value="all">점: 모두 보기</option>
+      <option value="none">점 끄기</option>
+      <option value="noX">× 점 끄기 (미산출)</option>
+      <option value="noO">○ 점 끄기 (영역 외)</option>
+      <option value="noXO">점 끄기 (미사용)</option>
+    </select>
+    <button data-n="1" title="방 이름 보이기·숨기기">방 이름</button>
   </div>
   <div class="dial" title="끌어서 돌리기"><div class="needle"></div><span>N</span></div>
   <div class="status"></div>
@@ -54,6 +63,7 @@ color:#1e293b;cursor:pointer}
 .bar button:hover{background:#eef3fa;border-color:#2563eb}
 .bar button.on{background:#2563eb;border-color:#2563eb;color:#fff}
 .bar .sep{width:6px}
+.bar select{font:inherit;font-size:12px;padding:3px 6px;border:1px solid #dde4ee;border-radius:7px;background:rgba(255,255,255,.92);color:#1e293b;cursor:pointer}
 .dial{position:absolute;right:10px;top:10px;width:58px;height:58px;border-radius:50%;border:2px solid #9aa7b8;
 background:rgba(255,255,255,.92);cursor:grab;user-select:none}
 .dial .needle{position:absolute;left:50%;top:6px;width:2px;height:23px;margin-left:-1px;background:#c62f2f;transform-origin:50% 23px}
@@ -92,8 +102,9 @@ function savePref(k, v) { try { sessionStorage.setItem('lsats.' + k, JSON.string
 function make(root) {
   const cv = root.querySelector('canvas'), ctx = cv.getContext('2d')
   const tip = root.querySelector('.tip'), status = root.querySelector('.status'), card = root.querySelector('.card')
+  const ptsel = root.querySelector('.ptsel')
   const dial = root.querySelector('.dial'), needle = dial.querySelector('.needle'), dialN = dial.querySelector('span')
-  const v = { z: 1, wc: [0, 0], rot: loadPref('rot', 0), labels: loadPref('labels', 'value'), W: 0, H: 0,
+  const v = { z: 1, wc: [0, 0], rot: loadPref('rot', 0), labels: loadPref('labels', 'value'), ptsShow: loadPref('ptsShow', 'all'), roomNames: loadPref('roomNames', true), W: 0, H: 0,
               data: null, fitKey: null, card: null, lastSel: undefined }
   BUS.views.add(v)
 
@@ -200,6 +211,7 @@ function make(root) {
     const rooms = d.mode === 'rooms'
     const sel = v.card ? v.card.id : null
     for (const p of d.pts) {
+      if (hidden(p)) continue
       const [sx, sy] = toScreen(p.x, p.y)
       if (sx < -20 || sy < -20 || sx > v.W + 20 || sy > v.H + 20) continue
       const rr = rooms ? Math.max(1.8, rad * 0.45) : rad
@@ -227,7 +239,7 @@ function make(root) {
         ctx.font = '10px ' + FONT; ctx.textBaseline = 'top'
         for (const p of d.pts) {
           const t = v.labels === 'full' ? p.lf : p.lv
-          if (!t) continue
+          if (!t || hidden(p)) continue
           const [sx, sy] = toScreen(p.x, p.y)
           if (sx < -10 || sy < -10 || sx > v.W || sy > v.H) continue
           ctx.fillStyle = p.k === 'v' ? '#1f2328' : '#6b7280'; ctx.fillText(t, sx + rad * 0.7 + 1, sy + rad * 0.7 + 1)
@@ -236,7 +248,7 @@ function make(root) {
     }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'     // 방 이름 (방이 충분히 클 때만)
     for (const r of d.rooms) {
-      if (!r.n) continue
+      if (!r.n || !v.roomNames) continue
       const [sx, sy] = toScreen(r.l[0], r.l[1])
       ctx.font = (rooms ? 'bold 12px ' : '11px ') + FONT
       const lines = rooms && r.t ? [r.n, r.t] : [r.n]
@@ -249,6 +261,8 @@ function make(root) {
     needle.style.transform = `rotate(${na}deg)`; dialN.style.transform = `rotate(${na}deg)`
     status.textContent = `회전 ${(((v.rot % 360) + 540) % 360 - 180).toFixed(1)}°` + hint
     root.querySelectorAll('[data-l]').forEach(b => b.classList.toggle('on', b.dataset.l === v.labels))
+    root.querySelector('[data-n]').classList.toggle('on', v.roomNames)
+    ptsel.value = v.ptsShow
     placeCard()
   }
 
@@ -263,10 +277,14 @@ function make(root) {
   }
   new ResizeObserver(resize).observe(root)
 
+  function hidden(p) {  // 「점 보기」 콤보: 모두 / 끄기 / × 끄기 / ○ 끄기
+    return v.ptsShow === 'none' || (v.ptsShow === 'noX' && p.k === 'n') || (v.ptsShow === 'noO' && p.k === 'o') || (v.ptsShow === 'noXO' && p.k !== 'v')
+  }
   function nearest(sx, sy) {
     if (!v.data) return null
     let best = null, bd = 14
     for (const p of v.data.pts) {
+      if (hidden(p)) continue
       const [px, py] = toScreen(p.x, p.y)
       const dd = Math.hypot(px - sx, py - sy)
       if (dd < bd) { bd = dd; best = p }
@@ -345,10 +363,17 @@ function make(root) {
   })
   dial.addEventListener('pointerup', () => { if (dd) setRot(v.rot, true); dd = null })
 
+  ptsel.addEventListener('change', () => {
+    v.ptsShow = ptsel.value; savePref('ptsShow', v.ptsShow)
+    if (v.card && hidden(v.card)) { v.card = null; card.style.display = 'none' }
+    draw()
+  })
+  ptsel.addEventListener('pointerdown', e => e.stopPropagation())
   root.querySelector('.bar').addEventListener('click', e => {
     const t = e.target.closest('button')
     if (!t) return
     if (t.dataset.l) { v.labels = t.dataset.l; savePref('labels', v.labels); draw(); return }
+    if (t.dataset.n) { v.roomNames = !v.roomNames; savePref('roomNames', v.roomNames); draw(); return }
     const a = t.dataset.a
     if (a === 'fit') { fit(null); draw(); return }
     const r = { ccw1: v.rot - 1, cw1: v.rot + 1, ccw90: v.rot - 90, cw90: v.rot + 90, plan: 0,

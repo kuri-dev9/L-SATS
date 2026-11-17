@@ -121,3 +121,36 @@ def test_ui_remembers_las_folders():
     update_ui(preview_mode=True)
     ui = load_ui()
     assert ui["las_last_folder"] == "/data/las" and ui["preview_mode"] is True and ui["las_out_folder"] == ""
+
+
+def test_cad_fit_finds_drawing_on_walls():
+    """측정점 없는 도면: 방 경계를 벽에 겹쳐 90° 돌림·이동을 찾는다."""
+    from slab import cad_fit as C
+
+    rooms = [{"name": "1호_거실", "poly": [[0, 0], [5000, 0], [5000, 4000], [0, 4000]]},
+             {"name": "1호_침실", "poly": [[5000, 0], [8000, 0], [8000, 4000], [5000, 4000]]},
+             {"name": "1호_주방", "poly": [[0, 4000], [3000, 4000], [3000, 7000], [0, 7000]]}]
+    true = {"k": 1, "s": 0.001, "t": [12.34, 3.21]}
+    res, lo = 0.05, np.array([0.0, 0.0])
+    wall = np.zeros((300, 300), int)
+    e = C._edge_points([np.array(r["poly"]) for r in C.fitted_rooms(rooms, true)], 0.02)
+    np.add.at(wall, (((e[:, 1] - lo[1]) / res).astype(int), ((e[:, 0] - lo[0]) / res).astype(int)), 5)
+    plan = {"res": res, "u0": 0.0, "v0": 0.0, "wall": wall, "floor": np.zeros_like(wall)}
+    tf, sc = C.auto_fit(plan, rooms)
+    assert tf["k"] == 1 and tf["s"] == 0.001 and np.allclose(tf["t"], true["t"], atol=0.06) and sc > 0.95
+    moved = C.fitted_rooms(rooms, {**tf, "t": [tf["t"][0] + 1.0, tf["t"][1]]})
+    assert C.score(plan, moved) < 0.6
+
+
+def test_structure_split_merge_rename():
+    from slab import las_layout as L
+
+    data = {"layouts": {"구조 A": [{"name": "방", "poly": [[0, 0], [1, 0], [1, 1]]}]}, "floors": {"7F": "구조 A", "8F": "구조 A"},
+            "walls": {"구조 A": []}, "cad": {}}
+    L.split_structure(data, ["8F"], "구조 B")
+    assert data["floors"] == {"7F": "구조 A", "8F": "구조 B"} and data["layouts"]["구조 B"] == data["layouts"]["구조 A"]
+    L.rename_structure(data, "구조 B", "최상층")
+    assert data["floors"]["8F"] == "최상층" and "구조 B" not in data["layouts"] and "최상층" in data["walls"]
+    L.merge_structures(data, "구조 A", ["최상층"])
+    assert data["floors"] == {"7F": "구조 A", "8F": "구조 A"} and list(data["layouts"]) == ["구조 A"] and list(data["walls"]) == ["구조 A"]
+
