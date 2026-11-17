@@ -29,6 +29,7 @@ from views.shared import clear_files, job_settings, sidebar_status
 
 ss = st.session_state
 WINDOWS = os.name == "nt"
+REMOTE = st.context.ip_address is not None  # 다른 PC 에서 접속 (localhost 면 None)
 
 
 @st.cache_data(show_spinner=False, max_entries=500)
@@ -187,11 +188,21 @@ def _send_to_analysis(paths: list[str]) -> None:
 if "las_dir" not in ss:
     start = load_ui()["las_last_folder"]
     ss.las_dir = start if start and Path(start).is_dir() else str(Path.home())
+if not ss.get("las_path_in"):  # 다른 화면에 다녀오면 Streamlit 이 입력 칸 값을 지운다
     ss.las_path_in = ss.las_dir
 
 st.title("LAS 변환", icon=":material/grid_on:")
 st.caption("층마다 하나씩 있는 레이저 스캔 점군(LAS·LAZ)에서, 모든 층에 같은 격자를 놓고 격자점마다 바닥·천장 높이를 뽑아 "
            "두께 분석용 파일을 만듭니다. 파일이 커서 올리지 않고 이 PC의 폴더에서 바로 읽어요.")
+if REMOTE:  # 서버 PC 의 폴더를 읽고 폴더 선택 창도 서버 PC 화면에 뜨므로, 다른 PC 에서는 쓰지 못하게 막는다
+    st.warning("LAS 변환은 프로그램이 설치된 PC 에서만 쓸 수 있어요.\n\n"
+               "LAS 파일이 너무 커서 올리지 않고, 프로그램이 설치된 PC 의 폴더에서 바로 읽기 때문이에요. "
+               "다른 PC 에서 접속한 지금은 이 기능을 쓸 수 없습니다. "
+               "프로그램이 설치된 PC 에서 직접 열어 주세요 (그 PC 의 브라우저 주소: `http://localhost:8501`).\n\n"
+               "변환한 결과(CSV)는 두께 분석에서 올려 쓰면 어디서든 볼 수 있어요.",
+               title="다른 PC 에서는 쓸 수 없는 기능이에요", icon=":material/desktop_access_disabled:")
+    sidebar_status()
+    st.stop()
 
 # ---------------------------------------------------------------- ① 폴더 고르기
 with st.container(border=True):
@@ -321,12 +332,13 @@ with st.container(border=True):
                                     format_func={"floor": "층마다 파일", "single": "하나의 파일"}.get)
         fmt = st.segmented_control("형식", ["csv", "xlsx"], default="csv", required=True, key="las_save_fmt",
                                    format_func={"csv": "CSV", "xlsx": "엑셀"}.get)
-    if "las_save_dir" not in ss:
-        ss.las_save_dir = load_ui()["las_out_folder"] or str(out_dir)
+    if not ss.get("las_save_dir"):  # 처음이거나, 다른 화면에 다녀와 입력 칸 값이 지워졌을 때
+        ss.las_save_dir = ss.get("_las_save_keep") or load_ui()["las_out_folder"] or str(out_dir)
     if ss.get("_las_save_goto"):  # 폴더 선택 창에서 고른 폴더 (입력 칸을 그리기 전에 넣는다)
         ss.las_save_dir = ss.pop("_las_save_goto")
     with st.container(horizontal=True, vertical_alignment="bottom"):
         st.text_input("저장할 폴더", key="las_save_dir", help="없는 폴더면 새로 만들어요. 마지막 저장 폴더를 기억해요.")
+        ss._las_save_keep = ss.las_save_dir
         if st.button("폴더 선택", icon=":material/folder_open:", key="las_save_dialog",
                      help="이 PC 의 폴더 선택 창(Windows 탐색기 / Mac Finder)을 엽니다."):
             try:

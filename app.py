@@ -59,9 +59,9 @@ else:
         "작업": [
             st.Page("views/analysis.py", title="두께 분석", icon=":material/layers:"),
             st.Page("views/report.py", title="보고서·내려받기", icon=":material/description:"),
-            st.Page("views/las.py", title="LAS 변환", icon=":material/grid_on:"),
             st.Page("views/jobs.py", title="작업 내역", icon=":material/history:"),
         ],
+        "데이터 준비": [st.Page("views/las.py", title="LAS 변환", icon=":material/grid_on:")],
         "관리": [st.Page("views/settings.py", title="설정", icon=":material/settings:")],
     },
     position="sidebar",

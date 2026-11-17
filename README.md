@@ -65,6 +65,18 @@ Python 설치 없이 **받고 → 압축 풀고 → 더블클릭**만 하면 됩
 - 설치가 끝나면 브라우저에 `http://localhost:8501`이 자동으로 열립니다.
 - 끝내려면 검은 명령 창을 닫습니다.
 
+창 없이 뒤에서 돌리고 관리하려면 (명령 프롬프트에서, macOS·Linux 는 `./run.sh` 로 같은 명령):
+
+```bat
+run.bat start      :: 뒤에서 실행하고 브라우저 열기 (이미 돌고 있으면 그대로 둠)
+run.bat status     :: 돌고 있는지 확인
+run.bat stop       :: 끄기
+run.bat restart    :: 껐다 다시 켜기 (git pull 뒤 등)
+run.bat log        :: 서버 기록 마지막 줄 보기 (.run\server.log)
+```
+
+포트를 바꾸려면 `set LSATS_PORT=8502` 뒤에 실행합니다. `start` 뒤에 붙인 옵션은 Streamlit 에 넘어갑니다 (`run.bat start --server.address 0.0.0.0`).
+
 명령 프롬프트에서 직접 실행할 때 (`run.bat`과 같은 동작):
 
 ```bat
@@ -94,7 +106,7 @@ run.bat --server.address 0.0.0.0
 | 실행하면 Microsoft Store가 열림 | Windows의 가짜 `python` 바로가기입니다. 1-1대로 python.org 설치본을 설치하세요 |
 | `Installation failed` | 인터넷·회사 프록시 확인 후 다시 실행. 계속 실패하면 `.venv` 폴더를 지우고 다시 실행 |
 | 브라우저가 안 열림 | 브라우저에서 `http://localhost:8501` 직접 입력 |
-| `Port 8501 is already in use` | 이미 실행 중인 창이 있습니다. 그 창을 닫거나 `run.bat --server.port 8502` |
+| `Port 8501 is already in use` | 이미 실행 중입니다. `run.bat status`로 확인하고 `run.bat restart`로 다시 켜거나, `set LSATS_PORT=8502` 후 실행 |
 | 위치도의 한글이 □로 보임 | Windows는 맑은 고딕을 자동으로 씁니다. Linux 서버라면 `sudo apt install fonts-nanum` |
 
 ---

@@ -51,3 +51,20 @@ jobs:
         run: |
           .venv\Scripts\python.exe -m slab demo_data\grid_analysis_floor_level_8F.csv demo_data\grid_analysis_floor_level_7F.csv --cad demo_data\report_merge_8F.dxf -o result.xlsx --dxf-output result.dxf
           if (-not (Test-Path result.xlsx)) { throw 'no result.xlsx' }
+      - name: run.bat start/status/stop/restart 확인
+        shell: pwsh
+        env:
+          LSATS_NO_BROWSER: "1"
+        run: |
+          function Run($a) { cmd /c "run.bat $a" | Out-Host; Write-Host "  -> run.bat $a exit $LASTEXITCODE"; return $LASTEXITCODE }
+          if ((Run status) -ne 0) { throw 'status: should be running (started by the step above)' }
+          if ((Run stop) -ne 0) { throw 'stop failed' }
+          if ((Run status) -eq 0) { throw 'status: should be stopped' }
+          if ((Run start) -ne 0) { throw 'start failed' }
+          if ((Run start) -ne 0) { throw 'second start should say already running' }
+          if ((Run restart) -ne 0) { throw 'restart failed' }
+          if ((Run status) -ne 0) { throw 'status after restart: should be running' }
+          if ((Run log) -ne 0) { throw 'log failed' }
+          if ((Run stop) -ne 0) { throw 'final stop failed' }
+          if ((Run status) -eq 0) { throw 'status: should be stopped at the end' }
+          Write-Host 'run.bat commands OK'
