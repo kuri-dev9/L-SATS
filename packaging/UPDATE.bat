@@ -15,5 +15,10 @@ if not exist "tools\update.ps1" (
     exit /b 1
 )
 powershell -NoProfile -ExecutionPolicy Bypass -File "tools\update.ps1" %*
-echo.
-pause
+if errorlevel 1 (
+    echo.
+    pause
+    exit /b 1
+)
+rem Success: the program was started again by update.ps1. Close this window after a moment.
+ping -n 4 127.0.0.1 >nul

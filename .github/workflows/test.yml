@@ -70,4 +70,21 @@ jobs:
           if ((Run status) -eq 0) { throw 'status: should be stopped at the end' }
           Write-Host 'run.bat commands OK'
           exit 0
+      - name: run.bat 자동 업데이트(git pull) 확인
+        shell: pwsh
+        run: |
+          $g = @('-c', 'user.name=ci', '-c', 'user.email=ci@example.com')
+          $up = 'C:\upd\origin'; $dn = 'C:\upd\local'
+          New-Item -ItemType Directory -Force $up | Out-Null
+          Copy-Item run.bat, requirements.txt, .gitattributes $up
+          git -C $up init -q -b main; git -C $up add -A; git -C $up @g commit -qm one
+          git clone -q $up $dn
+          Set-Content "$up\new.txt" 'new'; git -C $up add -A; git -C $up @g commit -qm two
+          cmd /c "$dn\run.bat update" | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "run.bat update exit $LASTEXITCODE" }
+          if (-not (Test-Path "$dn\new.txt")) { throw 'run.bat did not get the new version' }
+          cmd /c "$dn\run.bat update" | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "second update exit $LASTEXITCODE" }
+          Write-Host 'run.bat update OK'
+          exit 0
           exit 0

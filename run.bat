@@ -7,7 +7,11 @@ rem   run.bat stop       stop the server on the port
 rem   run.bat restart    stop, then start
 rem   run.bat status     show whether it is running
 rem   run.bat log        show the last lines of the server log
+rem   run.bat update     only get the newest version (git folders)
 rem
+rem In a git folder, run.bat (double-click, start, restart) first gets the newest version
+rem (git pull --ff-only), reinstalls packages if requirements.txt changed, and restarts the server.
+rem Set LSATS_NO_UPDATE=1 to skip this.
 rem Port: LSATS_PORT (default 8501). Extra arguments go to streamlit,
 rem e.g. run.bat start --server.address 0.0.0.0
 setlocal
@@ -15,6 +19,46 @@ cd /d "%~dp0"
 if not defined LSATS_PORT set "LSATS_PORT=8501"
 set "URL=http://localhost:%LSATS_PORT%"
 set "LOG=.run\server.log"
+
+rem ---- Get the newest version first (git folders only). One block: cmd reads it all before
+rem git changes this file, then the new run.bat is started and this one ends.
+set "UPD="
+if "%~1"=="" set "UPD=1"
+if /i "%~1"=="start" set "UPD=1"
+if /i "%~1"=="restart" set "UPD=1"
+if /i "%~1"=="update" set "UPD=1"
+set "A1=%~1"
+if defined A1 if "%A1:~0,2%"=="--" set "UPD=1"
+if defined LSATS_NO_UPDATE set "UPD="
+if not exist ".git\" set "UPD="
+if defined UPD (
+    git rev-parse --abbrev-ref --symbolic-full-name @{u} >nul 2>nul
+    if errorlevel 1 (
+        if /i "%~1"=="update" echo This folder has no remote branch to update from.
+    ) else (
+        echo Checking for a new version...
+        git fetch --quiet
+        if errorlevel 1 (
+            echo [WARN] Could not check for updates - no internet? Starting the current version.
+        ) else (
+            git merge-base --is-ancestor @{u} HEAD >nul 2>nul
+            if errorlevel 1 (
+                git merge --ff-only --quiet @{u}
+                if errorlevel 1 (
+                    echo [WARN] Could not update: program files were changed on this PC. Starting the current version.
+                ) else (
+                    echo Updated to the newest version.
+                    set "LSATS_NO_UPDATE=1"
+                    call "%~f0" %*
+                    exit /b
+                )
+            ) else (
+                echo Already the newest version.
+            )
+        )
+    )
+)
+if /i "%~1"=="update" exit /b 0
 
 rem Arguments after the command word go to streamlit
 set "ARGS="
@@ -39,6 +83,9 @@ if /i "%CMD%"=="/?" goto :cmd_help
 
 rem Default (double-click, or only streamlit options): run in this window
 call :prepare || exit /b 1
+rem A server left running in the background (run.bat start) holds the port: stop it so the new version runs
+call :server_pid
+if defined SPID if /i "%SNAME%"=="python" call :cmd_stop
 echo Starting Slab Thickness Analyzer: %URL%
 echo        The browser opens automatically. Close this window to stop.
 ".venv\Scripts\python.exe" -m streamlit run app.py --server.port %LSATS_PORT% %*
@@ -52,6 +99,8 @@ echo   run.bat stop       stop the server
 echo   run.bat restart    stop, then start
 echo   run.bat status     show whether it is running
 echo   run.bat log        show the last lines of the server log
+echo   run.bat update     only get the newest version - git folders
+echo In a git folder run.bat gets the newest version first. LSATS_NO_UPDATE=1 skips it.
 echo Port: set LSATS_PORT - default 8501
 exit /b 0
 

@@ -27,7 +27,7 @@ macOS/Linux: `./run.sh`, 또는 `.venv/bin/python`으로 같은 명령을 실행
 
 ## 현장 PC(Windows)에서 작업할 때
 
-- 이 저장소는 현장 Windows PC에서 직접 실행·개발합니다(`git clone` → `run.bat`). 현장 원본(LAS·CSV·DXF)은 그 PC에만 두고 커밋하지 않습니다.
+- 이 저장소는 현장 Windows PC에서 직접 실행·개발합니다(`git clone` → `run.bat`). `run.bat`(더블클릭·start·restart)은 git 폴더면 먼저 새 버전을 받고(`git fetch` → `merge --ff-only`, 이 파일이 바뀌어도 되도록 한 블록에서 받은 뒤 새 run.bat 을 다시 부름, `LSATS_NO_UPDATE=1`이면 건너뜀, `run.bat update`는 받기만) 패키지가 바뀌었으면 다시 설치, 뒤에 떠 있던 서버를 끄고 새 버전으로 띄웁니다. 저장소 맨 위 `UPDATE.bat` = `run.bat restart`(휴대용 ZIP 의 `packaging/UPDATE.bat`과 다름 — 그쪽 `update.ps1`은 켜진 프로그램을 닫고 바꾼 뒤 `START.bat`을 다시 띄움, CI 는 `-NoStart`). 현장 원본(LAS·CSV·DXF)은 그 PC에만 두고 커밋하지 않습니다.
 - 그 PC에서 먼저 확인할 일과 지금까지의 검증 결과는 `docs/DEVELOPER_PROMPT.md`의 '현장 PC' 절에 있습니다.
 - 사용자 작업 방식: 한국어로 답합니다. 개발 중에는 테스트를 매번 돌리지 말고 기능부터 만들되, 커밋·배포 전에는 `test.bat`(또는 pytest)으로 모두 통과를 확인합니다.
   현장 결과값(두께가 얇다 등)에 맞춰 계산을 바꾸지 말고 계산이 맞는지만 봅니다. 화면을 확인할 때 포트 8501 이 이미 쓰이고 있으면 기존 서버를 끄고 8501 로 다시 띄웁니다.

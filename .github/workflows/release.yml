@@ -32,12 +32,12 @@ jobs:
           [IO.File]::WriteAllText("$d\VERSION", 'v0.0.0')
           Write-Host "VERSION now: $([IO.File]::ReadAllText("$d\VERSION"))"
           Remove-Item -Recurse -Force "$d\slab"
-          powershell -NoProfile -ExecutionPolicy Bypass -File "$d\tools\update.ps1" -Source "$pwd\dist\L-SATS-update.zip"
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$d\tools\update.ps1" -Source "$pwd\dist\L-SATS-update.zip" -NoStart
           if ($LASTEXITCODE -ne 0) { throw "update failed: $LASTEXITCODE" }
           if ((Get-Content "$d\VERSION" -Raw) -ne $want) { throw 'VERSION not updated' }
           if (-not (Test-Path "$d\slab\core.py")) { throw 'slab not restored' }
           if (-not (Get-ChildItem "$d\backup")) { throw 'no backup' }
-          powershell -NoProfile -ExecutionPolicy Bypass -File "$d\tools\update.ps1" -Source "$pwd\dist\L-SATS-update.zip"
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$d\tools\update.ps1" -Source "$pwd\dist\L-SATS-update.zip" -NoStart
           if ($LASTEXITCODE -ne 0) { throw "second run failed: $LASTEXITCODE" }
           Remove-Item -Recurse -Force "$d\backup"
       - name: 압축 푼 폴더에서 START.bat 실행 확인

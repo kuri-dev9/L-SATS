@@ -2,8 +2,10 @@
 # Downloads L-SATS-update.zip (program files only) from the latest GitHub release and replaces
 # app.py, slab, demo_data, tools, START.bat ... The python folder is kept as is.
 # If the new version needs different packages, it opens the full ZIP download instead.
+# A running program is closed first and START.bat is started again at the end (also when already up to date).
 param(
-    [string]$Source = 'https://github.com/kuri-dev9/L-SATS/releases/latest/download/L-SATS-update.zip'
+    [string]$Source = 'https://github.com/kuri-dev9/L-SATS/releases/latest/download/L-SATS-update.zip',
+    [switch]$NoStart  # do not start START.bat at the end (CI check)
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -14,6 +16,7 @@ Set-Location $root
 function Fail([string]$msg) {
     Write-Host ''
     Write-Host "[ERROR] $msg" -ForegroundColor Red
+    if ($script:stopped) { StartProgram }  # nothing was replaced: start the current version again
     exit 1
 }
 
@@ -24,8 +27,24 @@ Write-Host '============================================================'
 # The program must be closed: START.bat and python files would be replaced while in use.
 $running = Get-Process python -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -and $_.Path.StartsWith((Join-Path $root 'python'), 'OrdinalIgnoreCase') }
+function StartProgram {
+    if ($NoStart) { return }
+    Write-Host 'Starting the program (START.bat)...'
+    Start-Process cmd.exe -ArgumentList '/c', 'START.bat' -WorkingDirectory $root
+}
 if ($running) {
-    Fail 'The program is running. Close the black START.bat window first, then run UPDATE.bat again.'
+    Write-Host 'Closing the running program...'
+    # Also close the black START.bat window (the cmd.exe that started python), not only python itself
+    $parents = foreach ($p in $running) {
+        (Get-CimInstance Win32_Process -Filter "ProcessId = $($p.Id)" -ErrorAction SilentlyContinue).ParentProcessId
+    }
+    $running | Stop-Process -Force -ErrorAction SilentlyContinue
+    foreach ($pp in $parents) {
+        if ($pp) { Get-Process -Id $pp -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'cmd' } |
+            Stop-Process -Force -ErrorAction SilentlyContinue }
+    }
+    $script:stopped = $true
+    Start-Sleep -Seconds 2
 }
 
 $cur = 'unknown'
@@ -56,6 +75,7 @@ try {
     if ($cur -eq $latest) {
         Write-Host ''
         Write-Host 'Already up to date. Nothing to do.' -ForegroundColor Green
+        StartProgram
         exit 0
     }
 
@@ -68,6 +88,7 @@ try {
         Write-Host 'Download the full ZIP once more (the browser opens now):'
         Write-Host "  $FullZip"
         Start-Process $FullZip
+        StartProgram
         exit 2
     }
 
@@ -92,7 +113,7 @@ try {
     Write-Host ''
     Write-Host "Updated: $cur -> $latest" -ForegroundColor Green
     Write-Host "Old files were saved in backup\$cur-$stamp"
-    Write-Host 'Double-click START.bat to use the new version.'
+    StartProgram
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
