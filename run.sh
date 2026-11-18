@@ -7,7 +7,10 @@
 #   ./run.sh restart         stop, then start
 #   ./run.sh status          show whether it is running
 #   ./run.sh log             follow the server log (Ctrl+C to quit watching)
+#   ./run.sh update          only get the newest version (git folders)
 #
+# In a git folder, ./run.sh (no argument, start, restart) first gets the newest version, reinstalls packages
+# if requirements.txt changed and restarts. It sets the git name for this folder if missing. LSATS_NO_UPDATE=1 skips it.
 # Port: LSATS_PORT (default 8501). Extra arguments go to streamlit, e.g. ./run.sh start --server.address 0.0.0.0
 set -e
 cd "$(dirname "$0")"
@@ -113,6 +116,36 @@ cmd_status() {
     echo "Port $PORT is in use (PID $(echo $pids)) but the app is not answering yet."
   fi
 }
+
+# Get the newest version first (git folders). Runs inside a function and ends with exec, so bash never
+# reads the rest of this file after git has changed it.
+self_update() {
+  [ -n "$LSATS_NO_UPDATE" ] && return 0
+  [ -d .git ] && command -v git >/dev/null 2>&1 || return 0
+  git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || {
+    [ "${1:-}" = update ] && echo "This folder has no remote branch to update from."; return 0; }
+  echo "Checking for a new version..."
+  if ! git fetch --quiet; then echo "[WARN] Could not check for updates (no internet?). Starting the current version."; return 0; fi
+  if git merge-base --is-ancestor '@{u}' HEAD; then echo "Already the newest version."; return 0; fi
+  # git asks "who are you" when it must make a merge commit (this PC has its own commits): name this folder only
+  git config user.email >/dev/null || git config user.email "lsats@localhost"
+  git config user.name >/dev/null || git config user.name "L-SATS PC"
+  git config pull.rebase >/dev/null || git config pull.rebase false
+  if git merge --no-edit --autostash --quiet '@{u}'; then
+    echo "Updated to the newest version."
+    LSATS_NO_UPDATE=1 exec "$0" "$@"
+  fi
+  git merge --abort >/dev/null 2>&1 || true
+  echo "[WARN] Could not update: the same program lines were changed on this PC. Starting the current version."
+}
+
+case "${1:-}" in
+  ""|start|restart|update|--*) self_update "$@" ;;
+esac
+[ "${1:-}" = update ] && exit 0
+
+# A server left running in the background holds the port: stop it so the new version runs (no-argument run)
+case "${1:-}" in ""|--*) [ -n "$(server_pids)" ] && cmd_stop ;; esac
 
 case "${1:-}" in
   start)   shift; cmd_start "$@" ;;

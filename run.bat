@@ -43,9 +43,16 @@ if defined UPD (
         ) else (
             git merge-base --is-ancestor @{u} HEAD >nul 2>nul
             if errorlevel 1 (
-                git merge --ff-only --quiet @{u}
+                rem git asks "who are you" when it must make a merge commit - this PC has its own commits -
+                rem set a name for this folder only, so the update never stops on that question
+                git config user.email >nul 2>nul || git config user.email "lsats@localhost"
+                git config user.name >nul 2>nul || git config user.name "L-SATS PC"
+                git config pull.rebase >nul 2>nul || git config pull.rebase false
+                rem --autostash: files changed on this PC are put aside and put back after the update
+                git merge --no-edit --autostash --quiet @{u}
                 if errorlevel 1 (
-                    echo [WARN] Could not update: program files were changed on this PC. Starting the current version.
+                    git merge --abort >nul 2>nul
+                    echo [WARN] Could not update: the same program lines were changed on this PC. Starting the current version.
                 ) else (
                     echo Updated to the newest version.
                     set "LSATS_NO_UPDATE=1"

@@ -80,9 +80,13 @@ jobs:
           git -C $up init -q -b main; git -C $up add -A; git -C $up @g commit -qm one
           git clone -q $up $dn
           Set-Content "$up\new.txt" 'new'; git -C $up add -A; git -C $up @g commit -qm two
+          # 현장 PC 처럼: 이 PC 에도 따로 커밋이 있고, git 이름·메일 설정이 없다 (plain git pull 은 멈춤)
+          Set-Content "$dn\mine.txt" 'mine'; git -C $dn add -A; git -C $dn @g commit -qm local
+          $env:GIT_CONFIG_GLOBAL = "$env:RUNNER_TEMP\empty.gitconfig"; Set-Content $env:GIT_CONFIG_GLOBAL ''
           cmd /c "$dn\run.bat update" | Out-Host
           if ($LASTEXITCODE -ne 0) { throw "run.bat update exit $LASTEXITCODE" }
           if (-not (Test-Path "$dn\new.txt")) { throw 'run.bat did not get the new version' }
+          if (-not (Test-Path "$dn\mine.txt")) { throw 'local commit lost' }
           cmd /c "$dn\run.bat update" | Out-Host
           if ($LASTEXITCODE -ne 0) { throw "second update exit $LASTEXITCODE" }
           Write-Host 'run.bat update OK'
